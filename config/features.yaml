@@ -1,0 +1,71 @@
+# SoundDNA Feature Configuration
+# ================================
+# This defines the "DNA Recipe" — which audio features are extracted and
+# which are included in the search index.
+#
+# ALL features are always extracted and stored in SQLite. ALL are now
+# included in the ChromaDB search vector (43 dimensions total).
+#
+# "weight" controls how much influence each feature has during similarity
+# search. Weight is applied at query time — the stored index is unweighted.
+# A weight of 0.0 effectively disables a feature without re-indexing.
+#
+# Increment `version` when changing which features are enabled.
+
+version: 3
+
+features:
+  tempo:
+    enabled: true
+    weight: 1.0
+    dimensions: 1
+    description: "BPM — energy baseline"
+
+  mfcc:
+    enabled: true
+    weight: 1.0
+    n_coefficients: 13
+    dimensions: 13
+    description: "Timbre/texture — captures the 'grit' in Phonk"
+
+  spectral_centroid:
+    enabled: true
+    weight: 1.0
+    dimensions: 1
+    description: "Brightness — high=EDM leads, low=dark bass"
+
+  zero_crossing_rate:
+    enabled: true
+    weight: 1.0
+    dimensions: 1
+    description: "Noisiness/distortion — key Phonk signature"
+
+  spectral_contrast:
+    enabled: true
+    weight: 1.0
+    dimensions: 7
+    description: "Production punchiness — peak-to-valley per frequency band"
+
+  onset_strength:
+    enabled: true
+    weight: 1.0
+    dimensions: 1
+    description: "How hard the beats hit — percussive energy"
+
+  rms_energy:
+    enabled: true
+    weight: 1.0
+    dimensions: 1
+    description: "Perceived loudness — dynamic range"
+
+  chroma:
+    enabled: true
+    weight: 1.0
+    dimensions: 12
+    description: "Pitch class profile — which musical notes dominate"
+
+  tonnetz:
+    enabled: true
+    weight: 1.0
+    dimensions: 6
+    description: "Harmonic relationships — minor thirds key for Phonk"

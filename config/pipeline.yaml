@@ -1,0 +1,21 @@
+# Pipeline configuration — worker counts, rate limiting, and behavior
+
+download:
+  workers: 4              # Concurrent download threads
+  rate_limit_pause: 2.0   # Seconds pause between downloads per thread
+  max_retries: 3          # Retry failed downloads
+
+analysis:
+  workers: auto           # "auto" = os.cpu_count(), or set an integer
+  timeout: 120            # Max seconds per track before timeout
+
+indexing:
+  batch_size: 100         # SQLite batch insert size
+
+cleanup:
+  delete_mp3_after: true  # Delete MP3 immediately after feature extraction
+  temp_dir: data/tmp      # Temporary download directory during pipeline runs
+
+progress:
+  show_bar: true          # Rich progress bars
+  log_file: data/pipeline.log
