@@ -17,18 +17,15 @@ Usage:
 import argparse
 import sys
 
-from deepkt.downloader import download_from_file
-from deepkt.indexer import get_collection, analyze_and_store, rebuild_search_index, query_similar
-from deepkt.analyzer import analyze_snippet, build_search_vector
-from deepkt.config import (
-    get_enabled_features, get_all_feature_names, get_search_dimensions,
-    get_feature_version, load_feature_config,
-)
-from deepkt import db as trackdb
+
+# NOTE: All deepkt imports are lazy (inside functions) to avoid loading
+# chromadb on every CLI invocation. Only commands that need chromadb
+# (reindex, similar, stats) will import it.
 
 
 def cmd_download(args):
     """Download audio snippets from a links file."""
+    from deepkt.downloader import download_from_file
     print(f"📥 Downloading snippets from {args.file}...")
     download_from_file(links_file=args.file, output_dir=args.output)
     print("✅ Done!")
@@ -36,6 +33,7 @@ def cmd_download(args):
 
 def cmd_analyze(args):
     """Analyze all MP3 snippets and store ALL features in SQLite."""
+    from deepkt.indexer import analyze_and_store
     print("🧬 Analyzing audio snippets (extracting ALL features)...")
     new_count = analyze_and_store(data_dir=args.data_dir)
     if new_count > 0:
@@ -44,6 +42,7 @@ def cmd_analyze(args):
 
 def cmd_reindex(args):
     """Rebuild the ChromaDB search index from stored features."""
+    from deepkt.indexer import rebuild_search_index
     print("🔄 Rebuilding search index from stored features...\n")
     rebuild_search_index()
     print("\n✅ Search index is up to date!")
@@ -51,6 +50,7 @@ def cmd_reindex(args):
 
 def cmd_search(args):
     """Search for tracks by artist or title."""
+    from deepkt import db as trackdb
     conn = trackdb.get_db()
     matches = trackdb.search_tracks(conn, args.query)
     conn.close()
@@ -69,6 +69,10 @@ def cmd_search(args):
 
 def cmd_similar(args):
     """Find tracks similar to a given track ID."""
+    from deepkt import db as trackdb
+    from deepkt.indexer import query_similar
+    from deepkt.analyzer import build_search_vector
+    from deepkt.config import get_enabled_features
     conn = trackdb.get_db()
     features = trackdb.get_features(conn, args.track_id)
     track = trackdb.get_track(conn, args.track_id)
@@ -96,6 +100,9 @@ def cmd_similar(args):
 
 def cmd_stats(args):
     """Show library statistics."""
+    from deepkt import db as trackdb
+    from deepkt.indexer import get_collection
+    from deepkt.config import get_search_dimensions, get_feature_version, get_enabled_features
     conn = trackdb.get_db()
     stats = trackdb.get_stats(conn)
     conn.close()
@@ -118,6 +125,7 @@ def cmd_stats(args):
 
 def cmd_features(args):
     """Show all features and their status."""
+    from deepkt.config import load_feature_config, get_enabled_features
     config = load_feature_config()
     enabled = get_enabled_features()
 
@@ -141,6 +149,8 @@ def cmd_features(args):
 
 def cmd_inspect(args):
     """Show all stored features for a specific track."""
+    from deepkt import db as trackdb
+    from deepkt.config import get_enabled_features
     conn = trackdb.get_db()
     track = trackdb.get_track(conn, args.track_id)
     features = trackdb.get_features(conn, args.track_id)

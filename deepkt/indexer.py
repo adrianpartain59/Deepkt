@@ -281,6 +281,7 @@ def query_similar_weighted(query_feature_dict, weights, n_results=5,
             "id": track["track_id"],
             "artist": track["artist"],
             "title": track["title"],
+            "url": track.get("url"),
         })
 
     stored_matrix = np.array(stored_vectors, dtype=np.float64)
@@ -372,6 +373,7 @@ def query_similar_weighted(query_feature_dict, weights, n_results=5,
             "id": info["id"],
             "artist": info["artist"],
             "title": info["title"],
+            "url": info.get("url"),
             "similarity": float(similarities[i]),
             "match_pct": round(float(similarities[i]) * 100, 1),
         })

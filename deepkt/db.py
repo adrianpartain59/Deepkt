@@ -67,11 +67,12 @@ def _init_tables(conn):
 def register_track(conn, track_id, artist, title, url=None, source="manual"):
     """Register a new track in the database.
 
-    Idempotent — skips if track_id already exists.
+    Idempotent — if track_id already exists, updates the URL if one is provided.
     """
     try:
         conn.execute(
-            "INSERT OR IGNORE INTO tracks (id, url, artist, title, source) VALUES (?, ?, ?, ?, ?)",
+            """INSERT INTO tracks (id, url, artist, title, source) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET url = COALESCE(excluded.url, url)""",
             (track_id, url, artist, title, source),
         )
         conn.commit()
@@ -193,7 +194,7 @@ def get_all_features(conn):
         List of dicts: [{track_id, artist, title, feature_data: {...}}, ...]
     """
     rows = conn.execute("""
-        SELECT t.id as track_id, t.artist, t.title, tf.feature_data
+        SELECT t.id as track_id, t.artist, t.title, t.url, tf.feature_data
         FROM tracks t
         JOIN track_features tf ON t.id = tf.track_id
         WHERE t.status = 'INDEXED'
@@ -206,6 +207,7 @@ def get_all_features(conn):
             "track_id": row["track_id"],
             "artist": row["artist"],
             "title": row["title"],
+            "url": row["url"],
             "feature_data": json.loads(row["feature_data"]),
         })
     return results
