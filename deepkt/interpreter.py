@@ -41,20 +41,30 @@ class SonicInterpreter:
             vals = [np.mean(v) for v in collections["rms_energy"]]
             self.stats["Energy"] = (np.percentile(vals, 5), np.percentile(vals, 95))
 
-        # 2. Brightness (Spectral Centroid)
-        if "spectral_centroid" in collections:
-            vals = [np.mean(v) for v in collections["spectral_centroid"]]
-            self.stats["Brightness"] = (np.percentile(vals, 5), np.percentile(vals, 95))
+        # 2. Drum Focus (HPSS Ratio)
+        if "hpss_ratio" in collections:
+            vals = [np.mean(v) for v in collections["hpss_ratio"]]
+            self.stats["Drum Focus"] = (np.percentile(vals, 5), np.percentile(vals, 95))
 
-        # 3. Punch (Onset Strength)
-        if "onset_strength" in collections:
-            vals = [np.mean(v) for v in collections["onset_strength"]]
-            self.stats["Punch"] = (np.percentile(vals, 5), np.percentile(vals, 95))
+        # 3. Timbre (MFCC)
+        if "mfcc" in collections:
+            vals = [np.mean(v) for v in collections["mfcc"]]
+            self.stats["Timbre"] = (np.percentile(vals, 5), np.percentile(vals, 95))
 
-        # 4. Rhythm/Complexity (Zero Crossing Rate) -> "Edge"?
-        if "zero_crossing_rate" in collections:
-            vals = [np.mean(v) for v in collections["zero_crossing_rate"]]
-            self.stats["Edge"] = (np.percentile(vals, 5), np.percentile(vals, 95))
+        # 4. Synth Crushing (Mid Frequency Flatness)
+        if "mid_frequency_flatness" in collections:
+            vals = [np.mean(v) for v in collections["mid_frequency_flatness"]]
+            self.stats["Synth Crushing"] = (np.percentile(vals, 5), np.percentile(vals, 95))
+
+        # 5. 808 Heaviness (Sub Band Energy)
+        if "sub_band_energy" in collections:
+            vals = [np.mean(v) for v in collections["sub_band_energy"]]
+            self.stats["808 Heaviness"] = (np.percentile(vals, 5), np.percentile(vals, 95))
+
+        # 6. Dynamics (Time Domain Crest)
+        if "time_domain_crest" in collections:
+            vals = [np.mean(v) for v in collections["time_domain_crest"]]
+            self.stats["Dynamics"] = (np.percentile(vals, 5), np.percentile(vals, 95))
             
     def interpret(self, features):
         """Map raw features to 0-100 scores and tags."""
@@ -79,34 +89,50 @@ class SonicInterpreter:
             if score > 80: tags.append("⚡️ High Energy")
             elif score < 30: tags.append("🧘 Chill")
 
-        # 2. Brightness
-        if "spectral_centroid" in features:
-            val = np.mean(features["spectral_centroid"])
-            score = normalize(val, self.stats.get("Brightness", (0, 1)))
-            results["Brightness"] = score
-            if score > 80: tags.append("💎 Crisp")
-            elif score < 30: tags.append("🌑 Dark")
+        # 2. Drum Focus
+        if "hpss_ratio" in features:
+            val = np.mean(features["hpss_ratio"])
+            score = normalize(val, self.stats.get("Drum Focus", (0, 1)))
+            results["Drum Focus"] = score
+            if score > 80: tags.append("🥁 Drum Heavy")
+            elif score < 30: tags.append("✨ Atmospheric")
 
-        # 3. Punch
-        if "onset_strength" in features:
-            val = np.mean(features["onset_strength"])
-            score = normalize(val, self.stats.get("Punch", (0, 1)))
-            results["Punch"] = score
-            if score > 80: tags.append("🥊 Punchy")
-            elif score < 30: tags.append("☁️ Smooth")
+        # 3. Timbre
+        if "mfcc" in features:
+            val = np.mean(features["mfcc"])
+            score = normalize(val, self.stats.get("Timbre", (0, 1)))
+            results["Timbre"] = score
+            if score > 80: tags.append("🎨 Textured")
+            elif score < 30: tags.append("🧊 Clean")
 
-        # 4. Edge (ZCR)
-        if "zero_crossing_rate" in features:
-            val = np.mean(features["zero_crossing_rate"])
-            score = normalize(val, self.stats.get("Edge", (0, 1)))
-            results["Edge"] = score
-            if score > 80: tags.append("🔪 Sharp")
-            elif score < 20: tags.append("🌊 Deep")
+        # 4. Synth Crushing
+        if "mid_frequency_flatness" in features:
+            val = np.mean(features["mid_frequency_flatness"])
+            score = normalize(val, self.stats.get("Synth Crushing", (0, 1)))
+            results["Synth Crushing"] = score
+            if score > 80: tags.append("📻 Lo-Fi Crushed")
+            elif score < 30: tags.append("🎹 Clean Synths")
 
-        # 5. Tempo (Absolute, not relative)
+        # 5. 808 Heaviness
+        if "sub_band_energy" in features:
+            val = np.mean(features["sub_band_energy"])
+            score = normalize(val, self.stats.get("808 Heaviness", (0, 1)))
+            results["808 Heaviness"] = score
+            if score > 80: tags.append("🔊 Massive 808")
+            elif score < 30: tags.append("🌊 Wave Bass")
+
+        # 6. Dynamics
+        if "time_domain_crest" in features:
+            val = np.mean(features["time_domain_crest"])
+            score = normalize(val, self.stats.get("Dynamics", (0, 1)))
+            results["Dynamics"] = score
+            if score > 80: tags.append("🪩 Bouncy")
+            elif score < 30: tags.append("🧱 Slammed (Loud)")
+
+        # 7. Tempo (Absolute, not relative)
         if "tempo" in features:
             bpm = features["tempo"][0]
-            results["Tempo"] = bpm  # Keep BPM as raw number? Or mapping?
+            results["Tempo"] = bpm
             # Phonk specific tags
             if 120 < bpm < 170: tags.append("🏎️ Phonk Drift")
             elif bpm < 90: tags.append("🐌 Slowed")

@@ -12,6 +12,7 @@ Usage:
     python cli.py stats                 Show library statistics
     python cli.py features              Show all features and which are enabled
     python cli.py inspect <track-id>    Show all stored features for a track
+    python cli.py optimize              Find optimal feature weights for matching artists
 """
 
 import argparse
@@ -185,6 +186,15 @@ def cmd_inspect(args):
         print(f"   {name:<22} {len(values):>4}  {search_flag:>9}  [{val_str}]")
 
 
+def cmd_optimize(args):
+    """Run weight optimization to improve artist grouping."""
+    try:
+        from optimize_weights import optimize
+        optimize()
+    except ImportError:
+        print("❌ Could not import optimize_weights script or its dependencies (like scipy).")
+
+
 def cmd_pipeline(args):
     """Run the full download → analyze → store pipeline in parallel."""
     from rich.console import Console
@@ -284,6 +294,10 @@ def main():
     insp = subparsers.add_parser("inspect", help="Show all stored features for a track")
     insp.add_argument("track_id", help="Track ID (filename) to inspect")
     insp.set_defaults(func=cmd_inspect)
+
+    # --- optimize ---
+    opt = subparsers.add_parser("optimize", help="Find optimal feature weights for grouping artists")
+    opt.set_defaults(func=cmd_optimize)
 
     # --- pipeline ---
     pipe = subparsers.add_parser("pipeline", help="Download + analyze in parallel")

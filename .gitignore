@@ -2,13 +2,19 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
-data/tracks.db
-data/index
-data/*.mp3
-data/temp/
+# Ignore all data by default
+data/
+# But keep the directory itself if needed (usually handled by gitkeep but for now ignore recursive content)
+!data/.gitkeep
+# Explicitly ignore generated artifacts
 output/
 downloads/
+# Logs
+*.log
+pipeline.log
+# Env
 .env
+# Test artifacts
 .pytest_cache/
 .coverage
 htmlcov/

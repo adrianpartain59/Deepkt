@@ -9,6 +9,7 @@ import os
 import glob
 import yt_dlp
 
+from yt_dlp.utils import sanitize_filename
 
 def smart_download_range(info_dict, ydl):
     """Dynamically determine the download range based on track duration.
@@ -63,18 +64,15 @@ def download_single(url, output_dir="data/tmp"):
     artist = info.get('uploader', 'Unknown')
     title = info.get('title', 'Unknown')
     duration = info.get('duration')
-    filename = f"{artist} - {title}.mp3"
+    
+    # yt-dlp applies platform-specific sanitization to filenames (e.g. replacing '/' with '⧸')
+    # We must replicate this sanitization to find the final MP3 path
+    raw_filename = f"{artist} - {title}.mp3"
+    filename = sanitize_filename(raw_filename)
     file_path = os.path.join(output_dir, filename)
 
-    # yt-dlp may sanitize filenames, so find the actual file
     if not os.path.exists(file_path):
-        mp3s = glob.glob(os.path.join(output_dir, "*.mp3"))
-        if mp3s:
-            # Get the most recently created mp3
-            file_path = max(mp3s, key=os.path.getmtime)
-            filename = os.path.basename(file_path)
-        else:
-            raise FileNotFoundError(f"No MP3 produced for {url}")
+        raise FileNotFoundError(f"yt-dlp reported success, but no MP3 produced for {url} at {file_path}")
 
     return {
         "file_path": file_path,

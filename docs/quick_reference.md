@@ -16,8 +16,8 @@
 
 ### Analysis & Indexing
 ```bash
-.venv/bin/python3.12 cli.py analyze                          # Analyze MP3s in data/raw_snippets
 .venv/bin/python3.12 cli.py reindex                          # Rebuild ChromaDB search index
+.venv/bin/python3.12 cli.py optimize                         # Find optimal feature weights for matching artists
 ```
 
 ### Search & Discovery
@@ -33,6 +33,7 @@
 .venv/bin/python3.12 cli.py features                         # Show all 9 features
 .venv/bin/python3.12 cli.py inspect "HXVRMXN - Eclipse.mp3"  # All 43 feature values
 ```
+*(To see the fully indexed map of how all tracks are grouped by Artist, view `docs/indexed_artists.md!)*
 
 ### Download Only
 ```bash

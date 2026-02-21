@@ -87,15 +87,17 @@ FEATURE_CONFIG = load_feature_config()
 
 # Human-readable labels and emoji for sidebar sliders
 FEATURE_DISPLAY = {
-    "tempo":              ("🥁 Tempo (BPM)", "Match tracks with similar tempo"),
-    "mfcc":               ("🎨 Timbre / Texture", "The overall 'sound' — grit, warmth, character"),
-    "spectral_centroid":  ("✨ Brightness", "Dark/bassy ↔ bright/shimmery"),
-    "zero_crossing_rate": ("⚡ Grit / Distortion", "Clean ↔ noisy/distorted"),
-    "spectral_contrast":  ("🔨 Punchiness", "How punchy and separated the mix is"),
-    "onset_strength":     ("💥 Beat Hardness", "Soft beats ↔ hard-hitting percussion"),
-    "rms_energy":         ("📢 Loudness", "Dynamic ↔ compressed/loud"),
-    "chroma":             ("🎹 Key / Harmony", "Match tracks with similar musical notes"),
-    "tonnetz":            ("🌙 Minor Key Feel", "Harmonic darkness — minor thirds"),
+    "tempo":                   ("tempo", "Match tracks with similar tempo (BPM)"),
+    "mfcc":                    ("mfcc", "The overall 'sound' — grit, warmth, character"),
+    "rms_energy":              ("rms_energy", "Dynamic ↔ compressed/loud"),
+    "hpss_ratio":              ("hpss_ratio", "Drums/808s vs Melodies/Pads"),
+    "mid_frequency_flatness":  ("mid_frequency_flatness", "Clean Synths ↔ Bit-Crushed Synths"),
+    "sub_band_energy":         ("sub_band_energy", "Wave Phonk ↔ Drift Phonk (Massive 808s)"),
+    "narrowband_crest":        ("narrowband_crest", "Soft Synths ↔ Heavy 808 Cowbells"),
+    "vocal_band_flux":         ("vocal_band_flux", "Instrumental ↔ Memphis Rap Chops"),
+    "time_domain_crest":       ("time_domain_crest", "Dynamic Bounce ↔ Brazilian Distortion/Loudness"),
+    "tempogram_ratio":         ("tempogram_ratio", "Straight 4/4 ↔ Syncopated Groove"),
+    "spectral_contrast_mean":  ("spectral_contrast_mean", "Muddy/Distorted ↔ Clean/Punchy Separation"),
 }
 
 
@@ -140,6 +142,11 @@ with st.sidebar:
     for feat_name in ENABLED_FEATURES:
         if f"weight_{feat_name}" not in st.session_state:
             st.session_state[f"weight_{feat_name}"] = DEFAULT_WEIGHTS.get(feat_name, 1.0)
+
+    if st.button("🔄 Reset to Recommended Defaults", use_container_width=True):
+        for feat_name in ENABLED_FEATURES:
+            st.session_state[f"weight_{feat_name}"] = DEFAULT_WEIGHTS.get(feat_name, 1.0)
+        st.rerun()
 
     weights_override = {}
     for feat_name in ENABLED_FEATURES:
@@ -208,7 +215,7 @@ def render_results(results, query_name=""):
             # Fetch detailed features for this track
             features = trackdb.get_features(conn, r['id'])
             if features:
-                render_feature_breakdown(features, use_expander=False)
+                render_feature_breakdown(features, track_id=r['id'], use_expander=False)
             else:
                 st.warning("Sonic DNA data unavailable for this track.")
                 
@@ -221,7 +228,7 @@ from deepkt.interpreter import SonicInterpreter
 def get_interpreter():
     return SonicInterpreter(DEFAULT_DB_PATH)
 
-def render_feature_breakdown(feature_dict, use_expander=True):
+def render_feature_breakdown(feature_dict, track_id="query", use_expander=True, track_url=None):
     """Show semantic DNA breakdown."""
     interpreter = get_interpreter()
     # If stats aren't loaded (empty DB initially), try loading
@@ -244,12 +251,13 @@ def render_feature_breakdown(feature_dict, use_expander=True):
         if bpm > 0:
             st.markdown(f"**Tempo**: {bpm:.1f} BPM")
             
-        # 2b. Vibe Bars
         metrics = [
             ("⚡️ Energy", "Energy"),
-            ("💎 Brightness", "Brightness"),
-            ("🥊 Punch", "Punch"),
-            ("🔪 Edge", "Edge"),
+            ("🥁 Drum Focus", "Drum Focus"),
+            ("🎨 Timbre", "Timbre"),
+            ("📻 Synth Crushing", "Synth Crushing"),
+            ("🔊 808 Heaviness", "808 Heaviness"),
+            ("🪩 Dynamics", "Dynamics"),
         ]
         
         for label, key in metrics:
@@ -257,9 +265,10 @@ def render_feature_breakdown(feature_dict, use_expander=True):
             st.write(f"**{label}**")
             st.progress(int(score) / 100)
         
-        # 3. Raw Stats Toggle
-        if st.checkbox("Show Raw Data", key=f"raw_{id(feature_dict)}"):
-            st.json(feature_dict)
+        # 3. Listen Button
+        if track_url:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.link_button("🎧 Listen on SoundCloud", track_url, use_container_width=True)
 
     if use_expander:
         with st.expander("🧬 Sonic DNA Breakdown", expanded=False):
@@ -318,7 +327,7 @@ with tab_url:
                     st.stop()
 
             st.success(f"Analyzed: **{track_name}**")
-            render_feature_breakdown(feature_dict)
+            render_feature_breakdown(feature_dict, track_id="url_query", track_url=url)
             results = query_similar_weighted(
                 feature_dict, weights_override,
                 n_results=min(5, track_count),
@@ -353,7 +362,7 @@ with tab_library:
             idx = track_options[selected]
             track = all_features[idx]
 
-            render_feature_breakdown(track["feature_data"])
+            render_feature_breakdown(track["feature_data"], track_id=track["track_id"], track_url=track.get("url"))
 
             results = query_similar_weighted(
                 track["feature_data"], weights_override,
