@@ -13,6 +13,8 @@ Usage:
     python cli.py features              Show all features and which are enabled
     python cli.py inspect <track-id>    Show all stored features for a track
     python cli.py optimize              Find optimal feature weights for matching artists
+    python cli.py crawl                 Crawl SoundCloud for new similar tracks
+    python cli.py ingest                Move crawled links into the main pipeline
 """
 
 import argparse
@@ -249,6 +251,50 @@ def cmd_pipeline_status(args):
             print(f"     - {f['id']}: {f['error']}")
 
 
+def cmd_crawl(args):
+    """Crawl SoundCloud for new artists based on similarity to indexed artists."""
+    from deepkt.crawler import SoundCloudSpider
+    spider = SoundCloudSpider()
+    spider.crawl()
+
+
+def cmd_ingest(args):
+    """Move URLs from crawled_links.txt to links.txt for processing."""
+    import os
+    if not os.path.exists("crawled_links.txt"):
+        print("❌ No crawled_links.txt found. Run 'cli.py crawl' first.")
+        return
+        
+    with open("crawled_links.txt", "r") as f:
+        new_links = [line.strip() for line in f if line.strip()]
+        
+    if not new_links:
+        print("❌ crawled_links.txt is empty.")
+        return
+        
+    # Read existing links to prevent duplicates in links.txt
+    existing = set()
+    if os.path.exists("links.txt"):
+        with open("links.txt", "r") as f:
+            for line in f:
+                if line.strip():
+                    existing.add(line.strip())
+                    
+    added = 0
+    with open("links.txt", "a") as f:
+        for link in new_links:
+            if link not in existing:
+                f.write(f"{link}\n")
+                existing.add(link)
+                added += 1
+                
+    # Clear crawled_links.txt
+    open("crawled_links.txt", "w").close()
+    
+    print(f"✅ Ingested {added} new links into links.txt.")
+    print("💡 Run 'cli.py pipeline' to begin downloading and analyzing.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="deepkt",
@@ -308,6 +354,14 @@ def main():
     # --- pipeline-status ---
     ps = subparsers.add_parser("pipeline-status", help="Show pipeline progress and errors")
     ps.set_defaults(func=cmd_pipeline_status)
+
+    # --- crawl ---
+    crl = subparsers.add_parser("crawl", help="Crawl SoundCloud for similar artists and tracks")
+    crl.set_defaults(func=cmd_crawl)
+
+    # --- ingest ---
+    ing = subparsers.add_parser("ingest", help="Move approved URLs from crawled_links.txt into links.txt")
+    ing.set_defaults(func=cmd_ingest)
 
     args = parser.parse_args()
     if not args.command:

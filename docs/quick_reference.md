@@ -14,6 +14,12 @@
 .venv/bin/python3.12 cli.py pipeline-status                  # Check progress
 ```
 
+### Crawl & Ingest
+```bash
+.venv/bin/python3.12 cli.py crawl                            # Scrape new URLs to crawled_links.txt
+.venv/bin/python3.12 cli.py ingest                           # Move URLs to links.txt for pipeline
+```
+
 ### Analysis & Indexing
 ```bash
 .venv/bin/python3.12 cli.py reindex                          # Rebuild ChromaDB search index
