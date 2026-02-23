@@ -307,13 +307,10 @@ def query_similar_weighted(query_feature_dict, weights, n_results=5,
     # Compute Euclidean distances
     diffs = stored_weighted - query_weighted
     
-    # --- Octave-Invariant Tempo Handling ---
-    # Find the index of the 'tempo' feature in the 43-dim vector
+    # --- Octave-Invariant Tempo Handling (Cosine-Compatible) ---
+    # Find the index of the 'tempo' feature
     try:
         tempo_idx = enabled.index("tempo")
-        # Since 'tempo' is 1D, its index in the flattened vector matches its index in 'enabled'
-        # IF all preceding features are also 1D? No.
-        # We need to find the correct column index by summing dimensions of preceding features.
         
         current_idx = 0
         from deepkt.features import EXTRACTOR_REGISTRY
@@ -336,33 +333,36 @@ def query_similar_weighted(query_feature_dict, weights, n_results=5,
             diff_05x = np.abs((t_stored * 0.5) - t_query)
             diff_2x = np.abs((t_stored * 2.0) - t_query)
             
-            # Take the minimum difference (closest octave match)
-            min_diff = np.minimum(diff_1x, np.minimum(diff_05x, diff_2x))
+            # Map the stored tempo to the closest octave for this specific query
+            best_t_stored = np.where(diff_05x < diff_1x, t_stored * 0.5, t_stored)
+            best_t_stored = np.where(diff_2x < np.minimum(diff_1x, diff_05x), t_stored * 2.0, best_t_stored)
             
-            # Normalize this minimal difference using the tempo std dev
-            # The 'diffs' matrix stores (stored_norm - query_norm)
-            # We replace the tempo column with the normalized min_diff
-            # Note: We must preserve the weight applied to this column
+            # Re-normalize and re-weight just for this column
+            tempo_mean = mean[tempo_col]
             tempo_std = std[tempo_col]
             tempo_weight = weight_vector[tempo_col]
             
-            # Replace the value in the weighted diffs matrix
-            # We use the magnitude directly since we square it later
-            diffs[:, tempo_col] = (min_diff / tempo_std) * tempo_weight
+            stored_weighted[:, tempo_col] = ((best_t_stored - tempo_mean) / tempo_std) * tempo_weight
             
     except ValueError:
         pass # Tempo feature not enabled
     
     # ---------------------------------------
-
-    distances = np.sqrt(np.sum(diffs ** 2, axis=1))
-
-    # Convert distance to similarity (0-100%)
-    # Use exponential decay: similarity = exp(-distance / scale)
-    # Scale by the number of active (non-zero weight) dimensions
-    active_dims = np.sum(weight_vector > 0)
-    scale = max(np.sqrt(active_dims), 1.0)  # Scale with sqrt of active dims
-    similarities = np.exp(-distances / scale)
+    # Calculate Cosine Similarity
+    
+    q_norm_val = np.linalg.norm(query_weighted)
+    if q_norm_val == 0: q_norm_val = 1e-10
+    q_normalized = query_weighted / q_norm_val
+    
+    s_norm_vals = np.linalg.norm(stored_weighted, axis=1, keepdims=True)
+    s_norm_vals[s_norm_vals == 0] = 1e-10
+    s_normalized = stored_weighted / s_norm_vals
+    
+    # Vectorized dot product (Cosine Similarity)
+    similarities = np.dot(s_normalized, q_normalized).flatten()
+    
+    # Map from [-1, 1] to [0, 1] range for UI percentage display
+    similarities = np.clip((similarities + 1.0) / 2.0, 0.0, 1.0)
 
     # Build results
     scored = []
