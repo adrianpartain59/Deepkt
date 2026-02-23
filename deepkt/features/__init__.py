@@ -8,7 +8,15 @@ analysis — every extractor runs regardless of config.
 from deepkt.features.tempo import TempoExtractor
 from deepkt.features.mfcc import MFCCExtractor
 from deepkt.features.spectral import SpectralCentroidExtractor, SpectralContrastExtractor, SpectralFlatnessExtractor, HissDensityExtractor, RolloffRatioExtractor, MidFrequencyFlatnessExtractor, SubBandEnergyExtractor, NarrowbandCrestExtractor, VocalBandFluxExtractor, SpectralContrastMeanExtractor
-from deepkt.features.rhythm import ZeroCrossingRateExtractor, OnsetStrengthExtractor, RMSEnergyExtractor, HPSSRatioExtractor, TimeDomainCrestExtractor, TempogramRatioExtractor
+from deepkt.features.rhythm import (
+    ZeroCrossingRateExtractor,
+    OnsetStrengthExtractor,
+    RMSEnergyExtractor,
+    HPSSRatioExtractor,
+    TimeDomainCrestExtractor,
+    TempogramRatioExtractor,
+    HighFreqPercussionExtractor,
+)
 from deepkt.features.chroma import ChromaExtractor
 from deepkt.features.tonnetz import TonnetzExtractor
 
@@ -34,6 +42,7 @@ EXTRACTOR_REGISTRY = {
     "time_domain_crest": TimeDomainCrestExtractor,
     "tempogram_ratio": TempogramRatioExtractor,
     "spectral_contrast_mean": SpectralContrastMeanExtractor,
+    "high_freq_percussion": HighFreqPercussionExtractor,
 }
 
 # Ordered list of all extractors — used during analysis

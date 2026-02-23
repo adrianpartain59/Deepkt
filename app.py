@@ -96,8 +96,9 @@ FEATURE_DISPLAY = {
     "narrowband_crest":        ("narrowband_crest", "Soft Synths ↔ Heavy 808 Cowbells"),
     "vocal_band_flux":         ("vocal_band_flux", "Instrumental ↔ Memphis Rap Chops"),
     "time_domain_crest":       ("time_domain_crest", "Dynamic Bounce ↔ Brazilian Distortion/Loudness"),
-    "tempogram_ratio":         ("tempogram_ratio", "Straight 4/4 ↔ Syncopated Groove"),
+    "tempogram_ratio":         ("tempogram_ratio", "Straight 4/4 ↔ Syncopated Trap (with Kick Count)"),
     "spectral_contrast_mean":  ("spectral_contrast_mean", "Muddy/Distorted ↔ Clean/Punchy Separation"),
+    "high_freq_percussion":    ("high_freq_percussion", "Smooth Pads ↔ Aggressive Sharp Hi-Hats/Snares"),
 }
 
 

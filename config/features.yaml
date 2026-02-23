@@ -17,121 +17,127 @@ version: 4
 features:
   tempo:
     enabled: true
-    weight: 2.13
+    weight: 2.48
     dimensions: 1
     description: "BPM — energy baseline"
 
   mfcc:
     enabled: true
-    weight: 1.23
+    weight: 0.59
     n_coefficients: 13
     dimensions: 13
     description: "Timbre/texture — captures the 'grit' in Phonk"
 
   spectral_centroid:
-    enabled: false
-    weight: 0.12
+    enabled: true
+    weight: 0.83
     dimensions: 1
     description: "Brightness — high=EDM leads, low=dark bass"
 
   zero_crossing_rate:
-    enabled: false
-    weight: 1.0
+    enabled: true
+    weight: 1.12
     dimensions: 1
     description: "Noisiness/distortion — key Phonk signature"
 
   spectral_contrast:
-    enabled: false
-    weight: 1.0
+    enabled: true
+    weight: 1.13
     dimensions: 7
     description: "Production punchiness — peak-to-valley per frequency band"
 
   onset_strength:
-    enabled: false
-    weight: 1.0
+    enabled: true
+    weight: 2.68
     dimensions: 1
     description: "How hard the beats hit — percussive energy"
 
   rms_energy:
     enabled: true
-    weight: 2.58
+    weight: 2.24
     dimensions: 1
     description: "Perceived loudness — dynamic range"
 
   chroma:
     enabled: false
-    weight: 1.0
+    weight: 0.34
     dimensions: 12
     description: "Pitch class profile — which musical notes dominate"
 
   tonnetz:
-    enabled: false
-    weight: 1.0
+    enabled: true
+    weight: 0.69
     dimensions: 6
     description: "Harmonic relationships — minor thirds key for Phonk"
 
   hpss_ratio:
     enabled: true
-    weight: 1.07
+    weight: 1.03
     dimensions: 1
     description: "Percussive-to-Harmonic Energy Ratio — isolates dense 808s and kicks from melodies"
 
   spectral_flatness:
     enabled: false
-    weight: 0.18
+    weight: 0.01
     dimensions: 1
     description: "Wiener Entropy — calculates the Lo-Fi hiss and white-noise presence"
 
   hiss_density:
-    enabled: false
-    weight: 0.01
+    enabled: true
+    weight: 1.17
     dimensions: 1
     description: "Minimum high-frequency noise floor (detects continuous vinyl crackle)"
 
   rolloff_ratio:
     enabled: false
-    weight: 0.55
+    weight: 0.21
     dimensions: 1
     description: "Spectral Rolloff — high = sparkling/modern, low = muffled/lo-fi"
 
   mid_frequency_flatness:
-    enabled: true
-    weight: 1.88
+    enabled: false
+    weight: 0.33
     dimensions: 1
     description: "Targeted Wiener Entropy — detects severely bit-crushed or overdriven synths in the mid-band"
 
   sub_band_energy:
-    enabled: false
-    weight: 0.11
+    enabled: true
+    weight: 0.68
     dimensions: 1
     description: "Sub-bass to total energy ratio (Drift Phonk 808s)"
 
   narrowband_crest:
     enabled: false
-    weight: 0.07
+    weight: 0.13
     dimensions: 1
     description: "Spectral Crest Factor in 800-1200Hz (Phonk Cowbell detection)"
 
   vocal_band_flux:
-    enabled: false
-    weight: 0.06
+    enabled: true
+    weight: 1.38
     dimensions: 1
     description: "Spectral Flux in 300-3000Hz (Memphis vocal chop aggression)"
 
   time_domain_crest:
     enabled: false
-    weight: 0.24
+    weight: 0.23
     dimensions: 1
     description: "Waveform Crest Factor (Brazilian Phonk limiter aggression)"
 
   tempogram_ratio:
     enabled: true
-    weight: 1.40
-    dimensions: 1
-    description: "Groove Index — variance of tempogram (straight 4/4 vs syncopated bounce)"
+    weight: 1.59
+    dimensions: 2
+    description: "Groove & Kick Density — tempo-invariant straightness (4/4 vs trap) and kick count"
 
   spectral_contrast_mean:
-    enabled: true
-    weight: 1.07
+    enabled: false
+    weight: 0.46
     dimensions: 1
     description: "Mix Clarity — high=punchy separation, low=muddy/distorted"
+
+  high_freq_percussion:
+    enabled: true
+    weight: 1.53
+    dimensions: 1
+    description: "Hi-Hat/Snare Aggression — >4kHz crest factor (sharp vs smooth mix)"

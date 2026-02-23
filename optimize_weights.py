@@ -4,7 +4,9 @@ from deepkt.config import get_enabled_features
 from deepkt.features import EXTRACTOR_REGISTRY
 import scipy.optimize
 
-def evaluate_weights(weights, stored_norm, weight_indices, artist_labels, k=4):
+import json
+
+def evaluate_weights(weights, stored_norm, weight_indices, artist_labels, track_ids, negative_pairs, k=3):
     """
     Score a specific weight combination. 
     Higher score is better (returns negative score for scipy minimizer).
@@ -40,15 +42,36 @@ def evaluate_weights(weights, stored_norm, weight_indices, artist_labels, k=4):
     
     # Check if they match the artist
     score = 0
+    penalty = 0
     for i in range(len(artist_labels)):
         # Array of artists for the top matches
         match_artists = artist_labels[top_k_idx[i]]
         # Count how many match the query artist
         score += np.sum(match_artists == artist_labels[i])
         
-    return -score
+        # Hard Negative Mining: 
+        # Check if any of the top-k matches form a negative pair with the query track
+        query_id = track_ids[i]
+        for match_idx in top_k_idx[i]:
+            match_id = track_ids[match_idx]
+            # Check both directions just in case
+            if (query_id, match_id) in negative_pairs or (match_id, query_id) in negative_pairs:
+                penalty += 10 # Massive penalty for grouping them
+        
+    return -(score - penalty)
 
 def optimize():
+    # 1. Load Hard Negatives
+    negative_pairs = set()
+    try:
+        with open("negative_pairs.json", "r") as f:
+            pairs = json.load(f)
+            for p in pairs:
+                negative_pairs.add((p[0], p[1]))
+        print(f"Loaded {len(negative_pairs)} hard negative constraints.")
+    except FileNotFoundError:
+        print("No negative_pairs.json found. Running standard Same-Artist optimization.")
+
     conn = trackdb.get_db("data/tracks.db")
     all_tracks = trackdb.get_all_features(conn)
     conn.close()
@@ -64,6 +87,7 @@ def optimize():
     # Build raw vectors and labels
     stored_vectors = []
     artist_labels = []
+    track_ids = []
     
     for track in all_tracks:
         raw = []
@@ -71,6 +95,7 @@ def optimize():
             raw.extend(track["feature_data"].get(feat_name, []))
         stored_vectors.append(raw)
         artist_labels.append(track["artist"])
+        track_ids.append(track["track_id"])
 
     stored_matrix = np.array(stored_vectors, dtype=np.float64)
     artist_labels = np.array(artist_labels)
@@ -89,10 +114,18 @@ def optimize():
         weight_indices.append((current_idx, current_idx + dims))
         current_idx += dims
         
+    # Calculate Maximum Possible Score
+    # For each track, max score is min(3, count(artist_tracks) - 1)
+    from collections import Counter
+    artist_counts = Counter(artist_labels)
+    max_score = 0
+    for artist in artist_labels:
+        max_score += min(3, artist_counts[artist] - 1)
+
     # Baseline Score (all weights = 1.0)
     baseline_weights = np.ones(len(enabled))
-    baseline_score = -evaluate_weights(baseline_weights, stored_norm, weight_indices, artist_labels)
-    print(f"Baseline Score (all 1.0): {baseline_score}")
+    baseline_score = -evaluate_weights(baseline_weights, stored_norm, weight_indices, artist_labels, track_ids, negative_pairs)
+    print(f"Baseline Score (all 1.0): {baseline_score} / {max_score}")
         
     bounds = [(0.0, 3.0) for _ in enabled]
     
@@ -100,7 +133,7 @@ def optimize():
     result = scipy.optimize.differential_evolution(
         evaluate_weights,
         bounds,
-        args=(stored_norm, weight_indices, artist_labels),
+        args=(stored_norm, weight_indices, artist_labels, track_ids, negative_pairs),
         maxiter=500,
         popsize=50,
         tol=0.001,
@@ -108,7 +141,7 @@ def optimize():
     )
 
     print("\noptimization finished!")
-    print(f"Optimized Score: {-result.fun} (vs Baseline: {baseline_score})")
+    print(f"Optimized Score: {-result.fun} / {max_score} (vs Baseline: {baseline_score})")
     print("\nOptimal Weights:")
     
     optimal_weights = {}

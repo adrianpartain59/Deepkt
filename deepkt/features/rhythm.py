@@ -73,32 +73,47 @@ class HPSSRatioExtractor(BaseFeatureExtractor):
 
 
 class TempogramRatioExtractor(BaseFeatureExtractor):
-    """Extracts the Groove Index — rhythm syncopation and complexity.
+    """Extracts the Groove Index — rhythm syncopation, kick density, and tempo-invariant bounce.
     
-    Calculates a local autocorrelation of the onset strength envelope to form a Tempogram.
-    By finding the ratio between the primary beat peak and the secondary peaks (variance),
-    we can distinguish between a straight 4/4 beat (low variance) and highly swung, 
-    syncopated trap/phonk grooves (high variance).
+    1. First, we isolate the kicks by limiting the onset envelope to low frequencies (fmax=250Hz).
+    2. We calculate the kick density (mean of the onset envelope) to distinguish high-energy 
+       trap from smooth trap.
+    3. We calculate the Global Tempogram (average periodicity over time). By calculating the 
+       Crest Factor (peak-to-average ratio) of this global tempogram, we get a tempo-invariant 
+       measure of "straightness". A 4/4 beat at ANY tempo has a massive singular peak, yielding 
+       a high crest factor. A syncopated trap beat has kicks spread across many fractional beats, 
+       yielding a flat/dense tempogram with a low crest factor.
     """
     
     name = "tempogram_ratio"
-    dimensions = 1
+    dimensions = 2
 
     def extract(self, y, sr, config=None):
-        # Calculate onset strength
-        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        # 1. Isolate the kicks (low frequency onsets only)
+        # fmax=250 focuses purely on the sub/bass range (kicks and 808s)
+        # ignoring hi-hats, snares, and synths completely.
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr, fmax=250)
         
-        # Calculate tempogram
-        # Use a large win_length to capture full measure grooves
+        # 2. Kick Density
+        # How many kicks/how loud are they on average?
+        kick_density = float(np.mean(onset_env))
+        
+        # 3. Tempo-Invariant Syncopation (Straight vs Bouncy)
+        # Calculate the tempogram
         tg = librosa.feature.tempogram(onset_envelope=onset_env, sr=sr, win_length=384)
         
-        # Calculate the variance of the tempogram across the time axis, 
-        # then mean across all windows. High variance = complex syncopation.
-        # Alternatively, the standard deviation of the tempogram gives us exactly how much 
-        # the rhythm deviates from a simple straight pulse.
-        pulse_complexity = np.std(tg, axis=0)
+        # Calculate the global tempogram (average periodicity across the entire track)
+        global_tg = np.mean(tg, axis=1)
         
-        return [float(np.mean(pulse_complexity))]
+        # Exclude the zero-lag bin (which is always a massive spike)
+        global_tg[:5] = 0
+        
+        # Calculate the Crest Factor of the global tempogram
+        # 4/4 Beat = Huge peak at the fundamental beat lag, deep valleys elsewhere (High CF)
+        # Trap Beat = Many peaks everywhere due to syncopation (Low CF)
+        straightness = float(np.max(global_tg) / (np.mean(global_tg) + 1e-8))
+        
+        return [straightness, kick_density]
 
 
 class TimeDomainCrestExtractor(BaseFeatureExtractor):
@@ -114,4 +129,38 @@ class TimeDomainCrestExtractor(BaseFeatureExtractor):
         max_abs = np.max(np.abs(y))
         rms = np.sqrt(np.mean(y**2)) + 1e-10
         crest = max_abs / rms
+        return [float(crest)]
+
+
+class HighFreqPercussionExtractor(BaseFeatureExtractor):
+    """Measures high-end drum aggression (hi-hats/snares).
+    
+    1. Erases all bass, kicks, and synth pads below 4000Hz.
+    2. Runs the Crest Factor purely on the remaining high-end audio.
+    3. Sharp/aggressive trap hats stabbing through the mix return a high score.
+    4. Smooth/padded hats buried in the mix return a low score.
+    """
+    name = "high_freq_percussion"
+    dimensions = 1
+
+    def extract(self, y, sr, config=None):
+        # 1. High-Pass Filter (Isolate >4000Hz)
+        # We transform to STFT, zero out everything below 4kHz, and transform back.
+        S = librosa.stft(y)
+        freqs = librosa.fft_frequencies(sr=sr)
+        
+        # Find the index where 4000Hz starts
+        high_pass_idx = np.searchsorted(freqs, 4000)
+        
+        # Zero out the low end
+        S[:high_pass_idx, :] = 0
+        
+        # Reconstruct high-passed audio
+        y_high = librosa.istft(S)
+        
+        # 2. Measure High-End Aggression (Crest Factor)
+        max_abs = np.max(np.abs(y_high))
+        rms = np.sqrt(np.mean(y_high**2)) + 1e-10
+        crest = max_abs / rms
+        
         return [float(crest)]
