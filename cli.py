@@ -191,10 +191,10 @@ def cmd_inspect(args):
 def cmd_optimize(args):
     """Run weight optimization to improve artist grouping."""
     try:
-        from optimize_weights import optimize
+        from scripts.optimize_weights import optimize
         optimize()
     except ImportError:
-        print("❌ Could not import optimize_weights script or its dependencies (like scipy).")
+        print("❌ Could not import scripts.optimize_weights script or its dependencies (like scipy).")
 
 
 def cmd_pipeline(args):
