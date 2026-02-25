@@ -17,44 +17,44 @@ version: 4
 features:
   tempo:
     enabled: true
-    weight: 0.77
+    weight: 2.25
     dimensions: 1
     description: "BPM — energy baseline"
 
   mfcc:
     enabled: true
-    weight: 0.76
+    weight: 1.54
     n_coefficients: 13
     dimensions: 13
     description: "Timbre/texture — captures the 'grit' in Phonk"
 
   spectral_centroid:
     enabled: true
-    weight: 0.19
+    weight: 1.89
     dimensions: 1
     description: "Brightness — high=EDM leads, low=dark bass"
 
   zero_crossing_rate:
     enabled: true
-    weight: 0.98
+    weight: 1.53
     dimensions: 1
     description: "Noisiness/distortion — key Phonk signature"
 
   spectral_contrast:
     enabled: true
-    weight: 1.47
+    weight: 1.33
     dimensions: 7
     description: "Production punchiness — peak-to-valley per frequency band"
 
   onset_strength:
     enabled: true
-    weight: 2.08
+    weight: 2.69
     dimensions: 1
     description: "How hard the beats hit — percussive energy"
 
   rms_energy:
     enabled: true
-    weight: 1.48
+    weight: 1.75
     dimensions: 1
     description: "Perceived loudness — dynamic range"
 
@@ -66,13 +66,13 @@ features:
 
   tonnetz:
     enabled: true
-    weight: 1.51
+    weight: 0.47
     dimensions: 6
     description: "Harmonic relationships — minor thirds key for Phonk"
 
   hpss_ratio:
     enabled: true
-    weight: 2.92
+    weight: 1.98
     dimensions: 1
     description: "Percussive-to-Harmonic Energy Ratio — isolates dense 808s and kicks from melodies"
 
@@ -84,7 +84,7 @@ features:
 
   hiss_density:
     enabled: true
-    weight: 2.84
+    weight: 0.37
     dimensions: 1
     description: "Minimum high-frequency noise floor (detects continuous vinyl crackle)"
 
@@ -102,7 +102,7 @@ features:
 
   sub_band_energy:
     enabled: true
-    weight: 0.59
+    weight: 1.81
     dimensions: 1
     description: "Sub-bass to total energy ratio (Drift Phonk 808s)"
 
@@ -114,7 +114,7 @@ features:
 
   vocal_band_flux:
     enabled: true
-    weight: 1.43
+    weight: 1.50
     dimensions: 1
     description: "Spectral Flux in 300-3000Hz (Memphis vocal chop aggression)"
 
@@ -126,7 +126,7 @@ features:
 
   tempogram_ratio:
     enabled: true
-    weight: 0.31
+    weight: 1.84
     dimensions: 2
     description: "Groove & Kick Density — tempo-invariant straightness (4/4 vs trap) and kick count"
 
@@ -138,6 +138,6 @@ features:
 
   high_freq_percussion:
     enabled: true
-    weight: 2.76
+    weight: 1.57
     dimensions: 1
     description: "Hi-Hat/Snare Aggression — >4kHz crest factor (sharp vs smooth mix)"

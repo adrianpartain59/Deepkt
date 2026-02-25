@@ -6,11 +6,15 @@ of {feature_name: [values]}. The full feature dict is stored in SQLite.
 A subset is selected for the ChromaDB search vector based on features.yaml.
 """
 
+import warnings
 import librosa
 import numpy as np
 
 from deepkt.features import EXTRACTOR_REGISTRY, ALL_EXTRACTOR_NAMES
 from deepkt.config import get_enabled_features, get_feature_config
+
+# Suppress librosa warnings (like "Empty filters detected") that garble the terminal UI
+warnings.filterwarnings("ignore", category=UserWarning, module="librosa")
 
 
 def analyze_snippet(file_path, config_path=None):

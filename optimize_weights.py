@@ -129,15 +129,19 @@ def optimize():
         
     bounds = [(0.0, 3.0) for _ in enabled]
     
-    print("Running Differential Evolution... this might take 1-3 minutes for a deep search...")
+    print("Running Differential Evolution...")
+    print("This will evaluate populations in parallel across your CPU cores.")
+    print("It will print its progress after each generation finishes (it may take 10-20 seconds per generation).\n")
+    
     result = scipy.optimize.differential_evolution(
         evaluate_weights,
         bounds,
         args=(stored_norm, weight_indices, artist_labels, track_ids, negative_pairs),
-        maxiter=500,
-        popsize=50,
-        tol=0.001,
-        disp=True
+        maxiter=100,
+        popsize=5,     # 5 * 14 dimensions = 70 evaluations per generation
+        tol=0.005,
+        disp=True,
+        workers=-1     # Use all available CPU cores for evaluation
     )
 
     print("\noptimization finished!")

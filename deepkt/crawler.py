@@ -11,7 +11,7 @@ from deepkt import db as trackdb
 CRAWLER_STATE_FILE = "data/crawler_state.json"
 CRAWLED_LINKS_FILE = "crawled_links.txt"
 DEFAULT_DB_PATH = "data/tracks.db"
-MAX_URLS = 1000
+MAX_URLS = 10000
 
 class SoundCloudSpider:
     def __init__(self, db_path=DEFAULT_DB_PATH):
@@ -90,32 +90,34 @@ class SoundCloudSpider:
              return res.json().get('collection', [])
         return []
 
-    def scrape_tracks(self, artist_url, permalink, num_tracks):
-        self.console.print(f"    [dim cyan]Extracting top {num_tracks} tracks using yt-dlp...[/dim cyan]")
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': True,
-            'playlistend': num_tracks * 3  # Fetch extra to account for dropped reposts
-        }
+    def scrape_tracks(self, uid, permalink, num_tracks):
+        self.console.print(f"    [dim cyan]Extracting top {num_tracks} tracks using SoundCloud API...[/dim cyan]")
         extracted = []
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(artist_url, download=False)
-                if not info or 'entries' not in info:
-                     return []
-                     
-                for entry in info['entries']:
-                    url = entry.get('url')
-                    # Ensure it's original (starts with artist url path)
-                    # And prevent getting "likes" or other pages
-                    if url and not '/sets/' in url and f"soundcloud.com/{permalink}/" in url:
-                         if url not in self.crawled_urls:
-                             extracted.append(url)
-                             if len(extracted) >= num_tracks:
-                                  break
+            url = f'https://api-v2.soundcloud.com/users/{uid}/toptracks?client_id={self.client_id}&limit={num_tracks * 3}'
+            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+            if res.status_code != 200:
+                self.console.print(f"    [dim red]API extraction failed (status {res.status_code})[/dim red]")
+                return []
+                
+            for entry in res.json().get('collection', []):
+                url = entry.get('permalink_url')
+                duration_ms = entry.get('duration')
+                
+                # Ensure it's original (starts with artist url path)
+                # And prevent getting "likes" or other pages
+                if url and not '/sets/' in url and f"soundcloud.com/{permalink}/" in url:
+                     if url not in self.crawled_urls:
+                         # Check duration to avoid adding tracks > 10 min (600,000 ms)
+                         if duration_ms is not None and duration_ms > 600000:
+                             self.console.print(f"      [dim yellow]Skipping long track ({duration_ms//1000}s): {url}[/dim yellow]")
+                             continue
+                             
+                         extracted.append(url)
+                         if len(extracted) >= num_tracks:
+                              break
         except Exception as e:
-            self.console.print(f"    [bold red]yt-dlp extraction failed: {e}[/bold red]")
+            self.console.print(f"    [bold red]API extraction failed: {e}[/bold red]")
         return extracted
 
     def append_links(self, urls):
@@ -125,24 +127,22 @@ class SoundCloudSpider:
                 self.crawled_urls.add(u)
 
     def determine_tier(self, followers):
-        if followers > 50000: return 50
-        elif followers >= 10000: return 35
-        elif followers >= 1000: return 20
+        if followers > 50000: return 100
+        elif followers >= 10000: return 50
+        elif followers >= 1000: return 25
         return 0
 
     def get_seed_artists(self):
-        conn = trackdb.get_db(self.db_path)
-        c = conn.cursor()
-        c.execute("SELECT DISTINCT artist, url FROM tracks WHERE status='INDEXED' AND url IS NOT NULL")
         results = set()
-        for row in c.fetchall():
-            url = row[1]
-            if url:
-                 parts = url.split('/')
-                 if len(parts) >= 4 and 'soundcloud.com' in parts[2]:
-                     artist_url = "/".join(parts[:4])
-                     results.add(artist_url)
-        conn.close()
+        seed_file = "seed_artists.txt"
+        if os.path.exists(seed_file):
+            with open(seed_file, 'r') as f:
+                for line in f:
+                    url = line.strip()
+                    if url and not url.startswith('#'):
+                        results.add(url)
+        else:
+            self.console.print(f"[bold yellow]Warning: {seed_file} not found![/bold yellow]")
         return list(results)
 
     def crawl(self):
@@ -153,7 +153,7 @@ class SoundCloudSpider:
              return
              
         seeds = self.get_seed_artists()
-        self.console.print(f"Loaded [bold cyan]{len(seeds)}[/bold cyan] unique Seed Artists from SQLite database.\n")
+        self.console.print(f"Loaded [bold cyan]{len(seeds)}[/bold cyan] unique Seed Artists from seed_artists.txt.\n")
         
         new_url_count = 0
         
@@ -195,7 +195,7 @@ class SoundCloudSpider:
                 seed_tracks_to_grab = self.determine_tier(seed_followers)
                 if seed_tracks_to_grab > 0:
                      self.console.print(f"  [green]SEED TIER HIT:[/green] Authorized for {seed_tracks_to_grab} tracks.")
-                     seed_tracks = self.scrape_tracks(seed_url, seed_permalink, seed_tracks_to_grab)
+                     seed_tracks = self.scrape_tracks(uid, seed_permalink, seed_tracks_to_grab)
                      if seed_tracks:
                           self.append_links(seed_tracks)
                           new_url_count += len(seed_tracks)
@@ -211,6 +211,7 @@ class SoundCloudSpider:
                 for sim in followings:
                      if new_url_count >= MAX_URLS: break
                      
+                     sim_uid = sim.get('id')
                      sim_permalink = sim.get('permalink')
                      sim_url = f"https://soundcloud.com/{sim_permalink}"
                      sim_followers = sim.get('followers_count', 0)
@@ -225,7 +226,7 @@ class SoundCloudSpider:
                           self.console.print("        [dim]SKIP: Too small (<1000 followers).[/dim]")
                      else:
                           self.console.print(f"        [green]TIER HIT:[/green] Authorized for {tracks_to_grab} tracks.")
-                          tracks = self.scrape_tracks(sim_url, sim_permalink, tracks_to_grab)
+                          tracks = self.scrape_tracks(sim_uid, sim_permalink, tracks_to_grab)
                           if tracks:
                                self.append_links(tracks)
                                new_url_count += len(tracks)

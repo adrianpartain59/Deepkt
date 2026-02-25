@@ -1,8 +1,8 @@
 # Pipeline configuration — worker counts, rate limiting, and behavior
 
 download:
-  workers: 4              # Concurrent download threads
-  rate_limit_pause: 2.0   # Seconds pause between downloads per thread
+  workers: 16             # Concurrent download threads
+  rate_limit_pause: 0.5   # Seconds pause between downloads per thread
   max_retries: 3          # Retry failed downloads
 
 analysis:

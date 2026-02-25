@@ -15,7 +15,8 @@ import queue
 import signal
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+import warnings
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, wait, FIRST_COMPLETED
 from datetime import datetime
 from threading import Event
 
@@ -141,10 +142,16 @@ def run_pipeline(urls=None, links_file=None, resume=False, config_overrides=None
                 trackdb.update_status(conn, track["id"], "DISCOVERED")
                 logger.info(f"Re-queuing for download: {track['id']}")
 
-    # 4. Filter out already-indexed URLs (by checking existing tracks)
-    existing_ids = {t["id"] for t in trackdb.get_tracks(conn)}
-    # We can't easily map URLs to IDs before downloading, so we'll handle
-    # duplicates after download based on filename/artist-title
+    # 4. Filter out already-indexed URLs
+    existing_urls = {t.get("url") for t in trackdb.get_tracks(conn) if t.get("url")}
+    
+    original_count = len(urls)
+    urls = [u for u in urls if u not in existing_urls]
+    
+    if len(urls) < original_count:
+        skipped = original_count - len(urls)
+        logger.info(f"Skipping {skipped} URLs that are already tracked in the database.")
+        console.print(f"[green]⏭️  Skipping {skipped} already-indexed tracks...[/green]")
 
     total_urls = len(urls) + len(resume_files)
 
@@ -162,7 +169,11 @@ def run_pipeline(urls=None, links_file=None, resume=False, config_overrides=None
     shutdown_event = Event()
 
     def handle_interrupt(signum, frame):
-        console.print("\n[yellow]⚠️  Interrupt received. Finishing current tasks...[/yellow]")
+        if shutdown_event.is_set():
+            console.print("\n[bold red]🛑 Force quitting immediately![/bold red]")
+            os._exit(1)
+            
+        console.print("\n[yellow]⚠️  Interrupt received. Finishing current tasks... (Press Ctrl+C again to force quit)[/yellow]")
         shutdown_event.set()
 
     original_handler = signal.getsignal(signal.SIGINT)
@@ -232,106 +243,116 @@ def _run_with_progress(urls, resume_files, conn, config, results, shutdown_event
                 dl_futures[future] = url
 
             # Also queue resume files directly for analysis
-            for rf in resume_files:
-                analyze_queue.put(rf)
-
+            active_an = {}
             # --- Stage 2 & 3: Process downloads as they complete ---
             with ProcessPoolExecutor(max_workers=an_workers) as an_executor:
-                an_futures = {}
+                active_dl = dict(dl_futures)
 
                 # Submit resume files for analysis immediately
                 for rf in resume_files:
                     if shutdown_event.is_set():
                         break
                     future = an_executor.submit(_analyze_worker, rf["file_path"])
-                    an_futures[future] = rf
+                    active_an[future] = rf
 
-                # Process download completions
-                for dl_future in as_completed(dl_futures):
+                # Process futures as they complete across both pools
+                while active_dl or active_an:
                     if shutdown_event.is_set():
                         break
 
-                    progress.advance(dl_task)
-                    dl_result = dl_future.result()
-
-                    if dl_result["status"] == "error":
-                        results["failed"] += 1
-                        error_msg = f"Download failed: {dl_result.get('url', '?')}: {dl_result.get('error', '?')}"
-                        results["errors"].append(error_msg)
-                        logger.error(error_msg)
-                        progress.advance(an_task)  # Skip analysis count
-                        progress.advance(st_task)  # Skip storage count
-                        continue
-
-                    results["downloaded"] += 1
-                    logger.info(f"Downloaded: {dl_result['filename']}")
-
-                    # Register in SQLite
-                    trackdb.register_track(
-                        conn,
-                        dl_result["filename"],
-                        dl_result["artist"],
-                        dl_result["title"],
-                        url=dl_result.get("url"),
-                        source="pipeline",
+                    # Wait for at least one future to complete
+                    done, _ = wait(
+                        list(active_dl.keys()) + list(active_an.keys()),
+                        return_when=FIRST_COMPLETED
                     )
-                    trackdb.update_status(conn, dl_result["filename"], "DOWNLOADED")
 
-                    # Check if already analyzed (idempotent)
-                    existing = trackdb.get_features(conn, dl_result["filename"])
-                    if existing:
-                        # Already have features — mark as INDEXED and skip
-                        trackdb.update_status(conn, dl_result["filename"], "INDEXED")
-                        results["skipped"] += 1
-                        progress.advance(an_task)
-                        progress.advance(st_task)
-                        # Clean up duplicate MP3
-                        if delete_mp3:
-                            _safe_delete(dl_result["file_path"], logger)
-                        continue
+                    for future in done:
+                        if shutdown_event.is_set():
+                            break
 
-                    # Submit for analysis
-                    future = an_executor.submit(_analyze_worker, dl_result["file_path"])
-                    an_futures[future] = dl_result
+                        if future in active_dl:
+                            # --- Handle Completed Download ---
+                            url = active_dl.pop(future)
+                            progress.advance(dl_task)
+                            dl_result = future.result()
 
-                # Process analysis completions
-                for an_future in as_completed(an_futures):
-                    if shutdown_event.is_set():
-                        # On interrupt, mark in-progress tracks as DISCOVERED for retry
-                        track_info = an_futures[an_future]
+                            if dl_result["status"] == "error":
+                                results["failed"] += 1
+                                error_msg = f"Download failed: {dl_result.get('url', '?')}: {dl_result.get('error', '?')}"
+                                results["errors"].append(error_msg)
+                                logger.error(error_msg)
+                                progress.advance(an_task)  # Skip analysis count
+                                progress.advance(st_task)  # Skip storage count
+                                continue
+
+                            results["downloaded"] += 1
+                            logger.info(f"Downloaded: {dl_result['filename']}")
+
+                            # Register in SQLite
+                            trackdb.register_track(
+                                conn,
+                                dl_result["filename"],
+                                dl_result["artist"],
+                                dl_result["title"],
+                                url=dl_result.get("url"),
+                                source="pipeline",
+                            )
+                            trackdb.update_status(conn, dl_result["filename"], "DOWNLOADED")
+
+                            # Check if already analyzed (idempotent)
+                            existing = trackdb.get_features(conn, dl_result["filename"])
+                            if existing:
+                                # Already have features — mark as INDEXED and skip
+                                trackdb.update_status(conn, dl_result["filename"], "INDEXED")
+                                results["skipped"] += 1
+                                progress.advance(an_task)
+                                progress.advance(st_task)
+                                # Clean up duplicate MP3
+                                if delete_mp3:
+                                    _safe_delete(dl_result["file_path"], logger)
+                                continue
+
+                            # Submit for analysis
+                            an_fut = an_executor.submit(_analyze_worker, dl_result["file_path"])
+                            active_an[an_fut] = dl_result
+
+                        elif future in active_an:
+                            # --- Handle Completed Analysis ---
+                            track_info = active_an.pop(future)
+                            progress.advance(an_task)
+
+                            try:
+                                feature_dict = future.result(timeout=config["analysis"]["timeout"])
+                            except Exception as e:
+                                results["failed"] += 1
+                                error_msg = f"Analysis failed: {track_info['filename']}: {e}"
+                                results["errors"].append(error_msg)
+                                logger.error(error_msg)
+                                trackdb.update_status(conn, track_info["filename"], "FAILED", error=str(e))
+                                progress.advance(st_task)
+                                # Still clean up the MP3
+                                if delete_mp3:
+                                    _safe_delete(track_info.get("file_path", ""), logger)
+                                continue
+
+                            # Store features in SQLite
+                            trackdb.store_features(conn, track_info["filename"], feature_dict)
+                            trackdb.update_status(conn, track_info["filename"], "INDEXED")
+                            results["analyzed"] += 1
+                            results["stored"] += 1
+                            progress.advance(st_task)
+
+                            total_dims = sum(len(v) for v in feature_dict.values())
+                            logger.info(f"Stored: {track_info['filename']} ({total_dims} dims)")
+
+                            # Delete MP3 immediately
+                            if delete_mp3:
+                                _safe_delete(track_info.get("file_path", ""), logger)
+
+                # Clean up if interrupted (mark remaining analyses as DISCOVERED so they aren't stuck locally)
+                if shutdown_event.is_set():
+                    for fut, track_info in active_an.items():
                         trackdb.update_status(conn, track_info["filename"], "DISCOVERED")
-                        continue
-
-                    progress.advance(an_task)
-                    track_info = an_futures[an_future]
-
-                    try:
-                        feature_dict = an_future.result(timeout=config["analysis"]["timeout"])
-                    except Exception as e:
-                        results["failed"] += 1
-                        error_msg = f"Analysis failed: {track_info['filename']}: {e}"
-                        results["errors"].append(error_msg)
-                        logger.error(error_msg)
-                        trackdb.update_status(conn, track_info["filename"], "FAILED", error=str(e))
-                        progress.advance(st_task)
-                        # Still clean up the MP3
-                        if delete_mp3:
-                            _safe_delete(track_info.get("file_path", ""), logger)
-                        continue
-
-                    # Store features in SQLite
-                    trackdb.store_features(conn, track_info["filename"], feature_dict)
-                    trackdb.update_status(conn, track_info["filename"], "INDEXED")
-                    results["analyzed"] += 1
-                    results["stored"] += 1
-                    progress.advance(st_task)
-
-                    total_dims = sum(len(v) for v in feature_dict.values())
-                    logger.info(f"Stored: {track_info['filename']} ({total_dims} dims)")
-
-                    # Delete MP3 immediately
-                    if delete_mp3:
-                        _safe_delete(track_info.get("file_path", ""), logger)
 
 
 def _safe_delete(file_path, logger):
