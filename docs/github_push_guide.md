@@ -2,6 +2,9 @@
 
 > **Purpose**: This document is a reference for AI agents and collaborators to understand the dual-repository push workflow for the Deepkt project. Read this BEFORE committing or pushing any code.
 
+> [!CAUTION]
+> **NEVER use `git checkout` to switch branches.** Switching between `main` and `personal-dev` will DELETE `data/tracks.db` because it is gitignored on `main` but tracked on `personal-dev`. Use `git push dev main:personal-dev` instead — this pushes directly without switching branches.
+
 ---
 
 ## Repositories
@@ -38,54 +41,34 @@
 - Pipeline logs (`*.log`)
 
 ### Dev Repo (`dev` → `personal-dev`)
-**Everything from public + personal data and curation files.**
+**Same source code as public. Data files are NOT pushed to avoid branch-switching data loss.**
 
-✅ Push (in addition to everything in Public):
-- `links.txt`, `links2.txt`, `crawled_links.txt`
-- `seed_artists.txt`
-- `data/tracks.db` (SQLite database with track metadata and features)
-- Any personal scripts, notes, or experimental files
-
-❌ Never push:
-- `data/chroma_db/` (can be rebuilt via `cli.py reindex`)
-- `data/tmp/` or `data/raw_snippets/` (temporary audio files)
-- `.venv/`
-- `.env` or secrets/API keys
-- Any `.mp3`, `.wav`, or audio files
+The dev repo receives the exact same source code as the public repo via a direct push (no branch switching). Data files (`tracks.db`, ChromaDB) live only on the local machine and can be fully rebuilt via `cli.py pipeline` + `cli.py reindex`.
 
 ---
 
 ## Push Commands
 
-### Push to Public (source code update)
+### Push to Both Repos (safe, no branch switching)
 ```bash
 git add -A
 git commit -m "descriptive message"
 git push origin main
-```
-
-### Push to Dev (includes personal data)
-```bash
-git checkout personal-dev
-git merge main
-git add -A
-git commit -m "descriptive message"
-git push dev personal-dev
-git checkout main
+git push dev main:personal-dev
 ```
 
 > [!IMPORTANT]
-> Always push to `origin main` FIRST, then merge `main` into `personal-dev` and push to `dev`. This keeps the dev branch as a strict superset of the public branch.
+> The command `git push dev main:personal-dev` pushes the local `main` branch directly to the `dev` remote's `personal-dev` branch **without ever switching branches locally**. This protects `data/tracks.db` from being deleted.
 
 ---
 
 ## .gitignore Behavior
 
-The `.gitignore` is configured for the **public** repo and blocks `data/` entirely. When pushing to the `dev` repo on the `personal-dev` branch, you may need to force-add data files:
+The `.gitignore` blocks `data/` entirely. This is intentional — database files should never be committed. If the database is lost, it can be fully rebuilt:
 
 ```bash
-git add -f data/tracks.db
-git add -f links.txt seed_artists.txt
+python cli.py pipeline --file links.txt   # Re-download and analyze all tracks
+python cli.py reindex                       # Rebuild ChromaDB search index
 ```
 
 ---
@@ -95,5 +78,5 @@ git add -f links.txt seed_artists.txt
 1. **No secrets** — Verify no API keys, tokens, or `.env` files are staged
 2. **No audio** — Verify no `.mp3` or `.wav` files are staged
 3. **No venv** — Verify `.venv/` is not staged
-4. **Correct remote** — Double-check you are pushing to the intended remote
-5. **Correct branch** — `main` for public, `personal-dev` for dev
+4. **No branch switching** — NEVER run `git checkout personal-dev`
+5. **Correct remote** — Double-check you are pushing to the intended remote

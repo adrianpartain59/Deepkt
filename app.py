@@ -1,13 +1,15 @@
 """
-Deepkt — Streamlit UI for sonic similarity search.
+Deepkt — Streamlit UI for sonic similarity search with integrated music player.
 """
 
 import streamlit as st
 import os
+import base64
 import tempfile
+import threading
 import urllib.parse
 
-from deepkt.downloader import smart_download_range
+from deepkt.downloader import download_single, smart_download_range
 from deepkt.analyzer import analyze_snippet, build_search_vector
 from deepkt.indexer import get_collection, rebuild_search_index, query_similar
 from deepkt.config import (
@@ -61,16 +63,37 @@ st.markdown("""
     .match-high { background: rgba(0,229,255,0.15); color: #00e5ff; }
     .match-mid  { background: rgba(124,77,255,0.15); color: #b388ff; }
     .match-low  { background: rgba(255,255,255,0.08); color: #888; }
-    .feature-label { font-size: 0.8rem; color: #777; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
-    .feature-value { font-size: 1rem; font-weight: 400; color: #ddd; }
     .section-header {
         font-size: 1.3rem; font-weight: 600; color: #e0e0e0;
         margin-top: 2rem; margin-bottom: 0.8rem; padding-bottom: 0.4rem;
         border-bottom: 1px solid var(--border);
     }
-    .weight-header {
-        font-size: 0.75rem; color: #666; text-transform: uppercase;
-        letter-spacing: 1.5px; margin-top: 0.5rem; margin-bottom: -0.3rem;
+    .player-card {
+        background: linear-gradient(135deg, rgba(124,77,255,0.12) 0%, rgba(224,64,251,0.08) 100%);
+        border: 1px solid rgba(224,64,251,0.25);
+        border-radius: 16px; padding: 1.5rem; margin: 1rem 0;
+        backdrop-filter: blur(10px);
+    }
+    .player-track-name {
+        font-size: 1.4rem; font-weight: 600; color: #f0f0f0;
+        margin-bottom: 0.3rem;
+    }
+    .player-track-artist {
+        font-size: 1rem; color: #b388ff; font-weight: 400;
+        margin-bottom: 1rem;
+    }
+    .player-position {
+        font-size: 0.8rem; color: #666; text-transform: uppercase;
+        letter-spacing: 1.5px; margin-bottom: 0.5rem;
+    }
+    .now-playing-dot {
+        display: inline-block; width: 8px; height: 8px;
+        background: #e040fb; border-radius: 50%;
+        animation: pulse 1.5s infinite; margin-right: 8px;
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(0.8); }
     }
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     hr { border-color: var(--border) !important; }
@@ -83,6 +106,76 @@ FEATURE_NAMES = get_search_feature_names()
 SEARCH_DIMS = get_search_dimensions()
 ENABLED_FEATURES = get_enabled_features()
 FEATURE_CONFIG = load_feature_config()
+
+# --- Buffer config ---
+BUFFER_SIZE = 5  # Pre-buffer this many clips ahead
+
+
+# ============================================================
+# Audio Player Helper
+# ============================================================
+
+def render_audio_player_b64(b64_audio):
+    """Render a looping, auto-playing audio element from pre-cached base64 data."""
+    audio_html = f"""
+    <audio autoplay loop controls style="width: 100%; border-radius: 10px; outline: none;">
+        <source src="data:audio/mp3;base64,{b64_audio}" type="audio/mp3">
+    </audio>
+    """
+    st.components.v1.html(audio_html, height=60)
+
+
+def download_clip_for_track(url, tmp_dir):
+    """Download a 30s clip for a track and return the file path."""
+    try:
+        result = download_single(url, output_dir=tmp_dir)
+        return result["file_path"]
+    except Exception as e:
+        return None
+
+
+def encode_clip_b64(clip_path):
+    """Read an MP3 file and return base64-encoded string for instant rendering."""
+    try:
+        with open(clip_path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    except Exception:
+        return None
+
+
+def prefill_buffer_sync(playlist, clip_cache, b64_cache, tmp_dir, start_from):
+    """Download clips and pre-encode them. Runs in a background thread."""
+    for i in range(start_from, min(start_from + BUFFER_SIZE, len(playlist))):
+        if i not in clip_cache and playlist[i].get("url"):
+            path = download_clip_for_track(playlist[i]["url"], tmp_dir)
+            if path:
+                clip_cache[i] = path
+                b64 = encode_clip_b64(path)
+                if b64:
+                    b64_cache[i] = b64
+
+
+def start_background_prefill(playlist, clip_cache, b64_cache, tmp_dir, start_from):
+    """Launch a non-blocking background thread to download upcoming clips."""
+    t = threading.Thread(
+        target=prefill_buffer_sync,
+        args=(playlist, clip_cache, b64_cache, tmp_dir, start_from),
+        daemon=True,
+    )
+    t.start()
+
+
+def cleanup_old_clips(clip_cache, b64_cache, current_index):
+    """Remove downloaded clips that are more than 1 position behind current."""
+    to_remove = [idx for idx in clip_cache if idx < current_index - 1]
+    for idx in to_remove:
+        try:
+            if os.path.exists(clip_cache[idx]):
+                os.remove(clip_cache[idx])
+        except OSError:
+            pass
+        del clip_cache[idx]
+        b64_cache.pop(idx, None)
 
 
 # ============================================================
@@ -125,6 +218,39 @@ with st.sidebar:
         "Matches are found using cosine distance across the latent space."
     )
 
+    # Player controls in sidebar when active
+    if st.session_state.get("player_active"):
+        st.markdown("---")
+        st.markdown("### 🎵 Now Playing")
+        playlist = st.session_state.get("playlist", [])
+        idx = st.session_state.get("current_index", 0)
+        if idx < len(playlist):
+            track = playlist[idx]
+            st.markdown(f"**{track['artist']}**")
+            st.markdown(f"*{track['title']}*")
+            st.caption(f"Track {idx + 1} of {len(playlist)} · {track['match_pct']}% match")
+
+        if st.button("⏹️ Stop Player", use_container_width=True):
+            # Clean up all clips
+            clip_cache = st.session_state.get("clip_cache", {})
+            for path in clip_cache.values():
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    pass
+            tmp_dir = st.session_state.get("player_tmp_dir", "")
+            try:
+                if tmp_dir and os.path.isdir(tmp_dir):
+                    import shutil
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+            except:
+                pass
+            for key in ["player_active", "playlist", "current_index", "clip_cache",
+                        "b64_cache", "player_tmp_dir", "query_clip_path", "query_track_name"]:
+                st.session_state.pop(key, None)
+            st.rerun()
+
 
 # ============================================================
 # Main Area
@@ -132,146 +258,236 @@ with st.sidebar:
 st.markdown('<p class="hero-title">Deepkt</p>', unsafe_allow_html=True)
 st.markdown('<p class="hero-subtitle">Find music that sounds like your music — not what an algorithm thinks you should hear.</p>', unsafe_allow_html=True)
 
-tab_url, tab_library = st.tabs(["🔗  Search by URL", "📚  Search from Library"])
-
-
-def render_results(results, query_name=""):
-    if not results:
-        st.warning("No similar tracks found. Try adding more songs to your library!")
-        return
-        
-    st.markdown(f'<div class="section-header">🎯 Top Matches{" for " + query_name if query_name else ""}</div>', unsafe_allow_html=True)
-    
-    # Open DB connection for detailed feature fetching
-    conn = trackdb.get_db()
-    
-    for i, r in enumerate(results):
-        pct = r["match_pct"]
-        label = f"#{i+1} {r['artist']} — {r['title']} ({pct}% Match)"
-        
-        with st.expander(label, expanded=False):
-            cols = st.columns([3, 1])
-            with cols[0]:
-                st.caption(f"Match Score: {pct}%")
-            with cols[1]:
-                if r.get("url"):
-                    st.link_button("▶️ Listen", r["url"], help="Open original URL")
-                else:
-                    # Fallback to SoundCloud search
-                    query = f"{r['artist']} {r['title']}"
-                    sc_url = f"https://soundcloud.com/search?q={urllib.parse.quote(query)}"
-                    st.link_button("🔎 Search SC", sc_url, help="Search on SoundCloud")
-            
-            # Fetch detailed features for this track
-            features = trackdb.get_features(conn, r['id'])
-            if features:
-                render_feature_breakdown(features, track_id=r['id'], use_expander=False)
-            else:
-                st.warning("Sonic DNA data unavailable for this track.")
-                
-    conn.close()
-
-
-def render_feature_breakdown(feature_dict, track_id="query", use_expander=True, track_url=None):
-    """Show semantic DNA breakdown."""
-    if track_url:
-        st.link_button("🎧 Listen on SoundCloud", track_url, use_container_width=True)
-
-
-
 
 # ============================================================
-# Tab 1: Search by URL
+# Player View (shown when a session is active)
 # ============================================================
-with tab_url:
-    url = st.text_input("Paste a SoundCloud or YouTube URL",
-        placeholder="https://soundcloud.com/artist/track")
+if st.session_state.get("player_active"):
+    playlist = st.session_state["playlist"]
+    idx = st.session_state["current_index"]
+    clip_cache = st.session_state["clip_cache"]
+    b64_cache = st.session_state.setdefault("b64_cache", {})
+    tmp_dir = st.session_state["player_tmp_dir"]
 
-    if st.button("🔍 Analyze & Find Matches", type="primary", use_container_width=True):
-        if not url.strip():
-            st.error("Please enter a URL.")
-        elif track_count == 0:
-            st.error("Your library is empty! Add links to `links.txt`, run **Analyze** then **Reindex**.")
-        else:
-            with st.spinner("⬇️ Downloading snippet..."):
+    # Kick off background downloads (non-blocking, returns immediately)
+    start_background_prefill(playlist, clip_cache, b64_cache, tmp_dir, start_from=idx + 1)
+
+    if idx < len(playlist):
+        track = playlist[idx]
+
+        # --- New Search button ---
+        if st.button("🏠 New Search", use_container_width=True):
+            # Clean up all clips
+            for path in clip_cache.values():
                 try:
-                    import yt_dlp
-                    tmp_dir = tempfile.mkdtemp()
-                    ydl_opts = {
-                        'format': 'bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio/best',
-                        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                        'download_ranges': smart_download_range,
-                        'force_keyframes_at_cuts': True,
-                        'outtmpl': f'{tmp_dir}/%(uploader)s - %(title)s.%(ext)s',
-                        'quiet': True,
-                    }
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(url, download=True)
-                        track_name = f"{info.get('uploader', 'Unknown')} - {info.get('title', 'Unknown')}"
-                except Exception as e:
-                    st.error(f"Download failed: {e}")
-                    st.stop()
-
-            mp3_files = [f for f in os.listdir(tmp_dir) if f.endswith(".mp3")]
-            if not mp3_files:
-                st.error("No audio file was produced. The URL may be invalid.")
-                st.stop()
-
-            downloaded_path = os.path.join(tmp_dir, mp3_files[0])
-
-            with st.spinner("🧬 Extracting Sonic DNA..."):
-                try:
-                    feature_dict = analyze_snippet(downloaded_path)
-                except Exception as e:
-                    st.error(f"Analysis failed: {e}")
-                    st.stop()
-
-            st.success(f"Analyzed: **{track_name}**")
-            render_feature_breakdown(feature_dict, track_id="url_query", track_url=url)
-            search_vector = build_search_vector(feature_dict)
-            results = query_similar(
-                search_vector,
-                n_results=min(5, track_count),
-            )
-            render_results(results, query_name=track_name)
-
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    pass
             try:
-                os.remove(downloaded_path)
-                os.rmdir(tmp_dir)
+                if tmp_dir and os.path.isdir(tmp_dir):
+                    import shutil
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
             except:
                 pass
+            for key in ["player_active", "playlist", "current_index", "clip_cache",
+                        "player_tmp_dir", "query_clip_path", "query_track_name"]:
+                st.session_state.pop(key, None)
+            st.rerun()
+
+        # --- Player Card ---
+        st.markdown(f"""
+        <div class="player-card">
+            <div class="player-position">
+                <span class="now-playing-dot"></span>NOW PLAYING · TRACK {idx + 1} OF {len(playlist)}
+            </div>
+            <div class="player-track-name">{track['title']}</div>
+            <div class="player-track-artist">{track['artist']} · {track['match_pct']}% match</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # --- Audio Player ---
+        b64_audio = b64_cache.get(idx)
+        if b64_audio:
+            render_audio_player_b64(b64_audio)
+        elif clip_cache.get(idx) and os.path.exists(clip_cache[idx]):
+            # File exists but not yet base64-encoded, encode now (fast, local file read)
+            b64_audio = encode_clip_b64(clip_cache[idx])
+            if b64_audio:
+                b64_cache[idx] = b64_audio
+                render_audio_player_b64(b64_audio)
+        else:
+            st.warning("⏳ Buffering this track...")
+            if track.get("url"):
+                with st.spinner("Downloading clip..."):
+                    path = download_clip_for_track(track["url"], tmp_dir)
+                    if path:
+                        clip_cache[idx] = path
+                        b64_audio = encode_clip_b64(path)
+                        if b64_audio:
+                            b64_cache[idx] = b64_audio
+                        st.rerun()
+                    else:
+                        st.error("Failed to download clip for this track.")
+
+        # --- Navigation ---
+        nav_cols = st.columns([1, 1, 1])
+        with nav_cols[0]:
+            if idx > 0:
+                if st.button("⏮️ Previous", use_container_width=True):
+                    st.session_state["current_index"] = idx - 1
+                    st.rerun()
+        with nav_cols[1]:
+            if track.get("url"):
+                st.link_button("🔗 Open on SoundCloud", track["url"], use_container_width=True)
+        with nav_cols[2]:
+            if idx < len(playlist) - 1:
+                if st.button("⏭️ Next", use_container_width=True, type="primary"):
+                    # Clean up old clips and skip instantly
+                    cleanup_old_clips(clip_cache, b64_cache, idx + 1)
+                    st.session_state["current_index"] = idx + 1
+                    st.rerun()
+            else:
+                st.button("🏁 End of playlist", use_container_width=True, disabled=True)
+
+    st.markdown("---")
+
+    # --- Upcoming Tracks ---
+    st.markdown('<div class="section-header">📋 Up Next</div>', unsafe_allow_html=True)
+    for i, track in enumerate(playlist):
+        if i == idx:
+            # Currently playing
+            st.markdown(f"**▶️ {i+1}. {track['artist']} — {track['title']}** ({track['match_pct']}%)")
+        elif i > idx:
+            buffered = "✅" if i in b64_cache else "⏳"
+            st.markdown(f"{buffered} {i+1}. {track['artist']} — {track['title']} ({track['match_pct']}%)")
+        else:
+            st.markdown(f"~~{i+1}. {track['artist']} — {track['title']}~~ ({track['match_pct']}%)")
 
 
 # ============================================================
-# Tab 2: Search from Library
+# Search View (shown when no player is active)
 # ============================================================
-with tab_library:
-    if stats.get("INDEXED", 0) == 0:
-        st.info("Your library is empty. Add links to `links.txt`, run **Analyze** then **Reindex**.")
-    else:
-        conn = trackdb.get_db()
-        all_features = trackdb.get_all_features(conn)
-        conn.close()
+else:
+    tab_url, tab_library = st.tabs(["🔗  Search by URL", "📚  Search from Library"])
 
-        track_options = {
-            f"{t['artist']} - {t['title']}": i
-            for i, t in enumerate(all_features)
-        }
-        selected = st.selectbox("Pick a track from your library", list(track_options.keys()))
+    # --- Tab 1: Search by URL ---
+    with tab_url:
+        url = st.text_input("Paste a SoundCloud or YouTube URL",
+            placeholder="https://soundcloud.com/artist/track")
 
-        if st.button("🔍 Find Similar", type="primary", use_container_width=True):
-            idx = track_options[selected]
-            track = all_features[idx]
+        if st.button("🔍 Analyze & Find Matches", type="primary", use_container_width=True):
+            if not url.strip():
+                st.error("Please enter a URL.")
+            elif track_count == 0:
+                st.error("Your library is empty! Add links to `links.txt`, run **Analyze** then **Reindex**.")
+            else:
+                # Create a persistent temp dir for clips
+                tmp_dir = tempfile.mkdtemp(prefix="deepkt_player_")
 
-            render_feature_breakdown(track["feature_data"], track_id=track["track_id"], track_url=track.get("url"))
+                with st.spinner("⬇️ Downloading snippet..."):
+                    try:
+                        result = download_single(url, output_dir=tmp_dir)
+                        downloaded_path = result["file_path"]
+                        track_name = f"{result['artist']} - {result['title']}"
+                    except Exception as e:
+                        st.error(f"Download failed: {e}")
+                        st.stop()
 
-            search_vector = build_search_vector(track["feature_data"])
-            results = query_similar(
-                search_vector,
-                n_results=min(5, track_count),
-                exclude_id=track["track_id"],
-            )
-            render_results(results, query_name=selected)
+                with st.spinner("🧬 Extracting Sonic DNA..."):
+                    try:
+                        feature_dict = analyze_snippet(downloaded_path)
+                    except Exception as e:
+                        st.error(f"Analysis failed: {e}")
+                        st.stop()
+
+                # Query for similar tracks (get 20 for a good playlist)
+                search_vector = build_search_vector(feature_dict)
+                results = query_similar(
+                    search_vector,
+                    n_results=min(20, track_count),
+                )
+
+                if not results:
+                    st.warning("No similar tracks found in your library!")
+                    st.stop()
+
+                # Build the playlist: query track first, then similar tracks
+                playlist = [{
+                    "id": "query",
+                    "artist": result["artist"],
+                    "title": result["title"],
+                    "url": url,
+                    "match_pct": 100.0,
+                }] + results
+
+                # Initialize clip cache with the query track (already downloaded)
+                clip_cache = {0: downloaded_path}
+                b64_cache = {0: encode_clip_b64(downloaded_path)}
+
+                # Pre-buffer the next BUFFER_SIZE clips (synchronous for initial load)
+                with st.spinner(f"🎵 Loading player — buffering {BUFFER_SIZE} tracks..."):
+                    prefill_buffer_sync(playlist, clip_cache, b64_cache, tmp_dir, start_from=1)
+
+                # Store everything in session state
+                st.session_state["player_active"] = True
+                st.session_state["playlist"] = playlist
+                st.session_state["current_index"] = 0
+                st.session_state["clip_cache"] = clip_cache
+                st.session_state["b64_cache"] = b64_cache
+                st.session_state["player_tmp_dir"] = tmp_dir
+                st.session_state["query_track_name"] = track_name
+                st.rerun()
+
+    # --- Tab 2: Search from Library ---
+    with tab_library:
+        if stats.get("INDEXED", 0) == 0:
+            st.info("Your library is empty. Add links to `links.txt`, run **Analyze** then **Reindex**.")
+        else:
+            conn = trackdb.get_db()
+            all_features = trackdb.get_all_features(conn)
+            conn.close()
+
+            track_options = {
+                f"{t['artist']} - {t['title']}": i
+                for i, t in enumerate(all_features)
+            }
+            selected = st.selectbox("Pick a track from your library", list(track_options.keys()))
+
+            if st.button("🔍 Find Similar", type="primary", use_container_width=True):
+                idx = track_options[selected]
+                track = all_features[idx]
+
+                # Create temp dir for clips
+                tmp_dir = tempfile.mkdtemp(prefix="deepkt_player_")
+
+                search_vector = build_search_vector(track["feature_data"])
+                results = query_similar(
+                    search_vector,
+                    n_results=min(20, track_count),
+                    exclude_id=track["track_id"],
+                )
+
+                if not results:
+                    st.warning("No similar tracks found!")
+                    st.stop()
+
+                # Build playlist — download the first track's clip to start
+                playlist = results
+                clip_cache = {}
+                b64_cache = {}
+
+                with st.spinner(f"🎵 Loading player — buffering {BUFFER_SIZE} tracks..."):
+                    prefill_buffer_sync(playlist, clip_cache, b64_cache, tmp_dir, start_from=0)
+
+                st.session_state["player_active"] = True
+                st.session_state["playlist"] = playlist
+                st.session_state["current_index"] = 0
+                st.session_state["clip_cache"] = clip_cache
+                st.session_state["b64_cache"] = b64_cache
+                st.session_state["player_tmp_dir"] = tmp_dir
+                st.session_state["query_track_name"] = selected
+                st.rerun()
 
 
 # --- Footer ---

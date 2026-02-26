@@ -158,6 +158,7 @@ def rebuild_search_index(db_path=DEFAULT_DB_PATH, db_dir=DEFAULT_DB_DIR):
             "artist": track["artist"],
             "title": track["title"],
             "filename": track["track_id"],
+            "url": track.get("url", ""),
         })
 
         if len(batch_ids) >= batch_size:
@@ -214,6 +215,7 @@ def query_similar(query_vector, n_results=5, exclude_id=None, db_dir=DEFAULT_DB_
             "id": track_id,
             "artist": meta["artist"],
             "title": meta["title"],
+            "url": meta.get("url", ""),
             "similarity": similarity,
             "match_pct": round(similarity * 100, 1),
         })
