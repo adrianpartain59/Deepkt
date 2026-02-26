@@ -1,112 +1,95 @@
 """
-Analyzer — Config-driven feature extraction engine.
+Analyzer — Neural Network feature extraction engine.
 
-Runs ALL registered feature extractors on audio and returns a dict
-of {feature_name: [values]}. The full feature dict is stored in SQLite.
-A subset is selected for the ChromaDB search vector based on features.yaml.
+Extracts semantic audio embeddings using LAION-CLAP (Contrastive Language-Audio Pretraining).
+Returns a single 512-dimensional vector that represents the Sonic DNA of the track.
 """
 
 import warnings
 import librosa
 import numpy as np
+import torch
+from transformers import ClapModel, ClapProcessor
 
-from deepkt.features import EXTRACTOR_REGISTRY, ALL_EXTRACTOR_NAMES
-from deepkt.config import get_enabled_features, get_feature_config
+# Suppress warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
-# Suppress librosa warnings (like "Empty filters detected") that garble the terminal UI
-warnings.filterwarnings("ignore", category=UserWarning, module="librosa")
+# --- Initialize LAION-CLAP Neural Network ---
+# Load model onto Apple Silicon MPS if available, otherwise fallback to CPU
+DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
+_processor = None
+_model = None
+
+def _setup_model():
+    """Lazy initialize the neural network on the first call per worker process."""
+    global _processor, _model
+    if _processor is not None and _model is not None:
+        return True
+
+    print(f"Loading LAION-CLAP Neural Network to {DEVICE}...")
+    try:
+        _processor = ClapProcessor.from_pretrained("laion/clap-htsat-unfused")
+        _model = ClapModel.from_pretrained("laion/clap-htsat-unfused").to(DEVICE)
+        _model.eval()
+        return True
+    except Exception as e:
+        print(f"❌ Failed to load Neural Network: {e}")
+        _processor = None
+        _model = None
+        return False
 
 
 def analyze_snippet(file_path, config_path=None):
-    """Extract ALL features from an audio file.
-
-    Runs every registered extractor regardless of what's enabled in config.
-    Returns a dict keyed by feature name so values can be stored and
-    selectively used later.
+    """Extract a 512-d semantic embedding using LAION-CLAP.
 
     Args:
         file_path: Path to an audio file (MP3, WAV, etc.)
-        config_path: Optional path to features.yaml (for extractor-specific params).
+        config_path: Ignored (legacy parameter).
 
     Returns:
-        Dict of {feature_name: [float, ...]} with all 43 dimensions.
-        Example: {"tempo": [143.5], "mfcc": [-20.4, 65.2, ...], ...}
+        Dict: {"clap_embedding": [float, ...]} with 512 dimensions.
     """
-    # 1. Load audio
-    y, sr = librosa.load(file_path)
+    if not _setup_model():
+        return {"clap_embedding": [0.0] * 512}
 
-    # 2. Remove silence
-    y_trimmed, _ = librosa.effects.trim(y, top_db=20)
+    try:
+        # 1. Load audio at exactly 48kHz (CLAP requirement)
+        y, sr = librosa.load(file_path, sr=48000)
 
-    # 3. Run ALL extractors
-    feature_dict = {}
-    for name in ALL_EXTRACTOR_NAMES:
-        extractor_cls = EXTRACTOR_REGISTRY[name]
-        ext = extractor_cls()
+        # 2. Trim silence
+        y_trimmed, _ = librosa.effects.trim(y, top_db=20)
 
-        # Get extractor-specific config (e.g., n_coefficients for MFCC)
-        cfg = {}
-        if config_path:
-            cfg = get_feature_config(name, config_path)
-
-        try:
-            values = ext.extract(y_trimmed, sr, cfg)
-            feature_dict[name] = values
-        except Exception as e:
-            # If one extractor fails, store zeros and continue
-            feature_dict[name] = [0.0] * ext.dimensions
-            print(f"  [WARN] Extractor '{name}' failed: {e}")
-
-    return feature_dict
+        # 3. Process through Neural Network
+        inputs = _processor(audio=y_trimmed, sampling_rate=48000, return_tensors="pt").to(DEVICE)
+        
+        with torch.no_grad():
+            outputs = _model.get_audio_features(**inputs)
+            
+        # Move back to CPU and convert to standard Python float list
+        embedding = outputs.pooler_output[0].cpu().numpy().tolist()
+        
+        # Explicit memory cleanup to prevent MPS memory creep
+        del inputs
+        del outputs
+        if DEVICE == "mps":
+            torch.mps.empty_cache()
+        
+        return {"clap_embedding": embedding}
+    except Exception as e:
+        print(f"  [WARN] Neural Network analysis failed: {e}")
+        return {"clap_embedding": [0.0] * 512}
 
 
 def build_search_vector(feature_dict, config_path=None, weights_override=None):
-    """Select enabled features from a stored feature dict → weighted flat list for ChromaDB.
-
-    Weights scale each feature group's influence in similarity search.
-    Higher weight = more influence. Weight of 0.0 effectively disables.
-
-    Args:
-        feature_dict: Dict from analyze_snippet() or loaded from SQLite.
-        config_path: Path to features.yaml.
-        weights_override: Optional dict of {feature_name: weight} to override
-                          config weights. Used by the UI sliders.
+    """Extract the embedding for ChromaDB. Weights are obsolete for Neural Networks.
 
     Returns:
-        List of floats — the weighted search vector.
+        List of floats — the 512-d search vector.
     """
-    from deepkt.config import DEFAULT_CONFIG_PATH, get_feature_weights
-    config_path = config_path or DEFAULT_CONFIG_PATH
-
-    enabled = get_enabled_features(config_path)
-    default_weights = get_feature_weights(config_path)
-
-    # Merge overrides
-    weights = {**default_weights}
-    if weights_override:
-        weights.update(weights_override)
-
-    vector = []
-    for name in enabled:
-        values = feature_dict.get(name, [])
-        w = weights.get(name, 1.0)
-        vector.extend([v * w for v in values])
-    return vector
+    return feature_dict.get("clap_embedding", [0.0] * 512)
 
 
 def get_full_feature_names():
-    """Return human-readable names for ALL stored features (all 43 dims).
+    """Return human-readable names for UI (legacy compatibility)."""
+    return [f"Semantic Dimension {i+1}" for i in range(512)]
 
-    Returns:
-        List of (feature_group, dimension_label) tuples.
-    """
-    names = []
-    for name in ALL_EXTRACTOR_NAMES:
-        ext = EXTRACTOR_REGISTRY[name]()
-        if ext.dimensions == 1:
-            names.append(name.replace("_", " ").title())
-        else:
-            base = name.replace("_", " ").title()
-            for i in range(ext.dimensions):
-                names.append(f"{base} {i+1}")
-    return names

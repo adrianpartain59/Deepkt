@@ -6,7 +6,7 @@ download:
   max_retries: 3          # Retry failed downloads
 
 analysis:
-  workers: auto           # "auto" = os.cpu_count(), or set an integer
+  workers: 2              # Constrain to 2 to prevent PyTorch MPS Out-Of-Memory system freezes
   timeout: 120            # Max seconds per track before timeout
 
 indexing:

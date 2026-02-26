@@ -125,10 +125,14 @@ def run_pipeline(urls=None, links_file=None, resume=False, config_overrides=None
     # 3. Handle resume — re-queue stuck tracks
     resume_files = []
     if resume:
-        stuck = trackdb.get_tracks(conn, status="DOWNLOADING") + trackdb.get_tracks(conn, status="ANALYZING")
+        stuck = (
+            trackdb.get_tracks(conn, status="DOWNLOADING") 
+            + trackdb.get_tracks(conn, status="ANALYZING")
+            + trackdb.get_tracks(conn, status="DOWNLOADED")
+        )
         for track in stuck:
             mp3_path = os.path.join(temp_dir, track["id"])
-            if os.path.exists(mp3_path):
+            if os.path.exists(mp3_path) and track["status"] != "DOWNLOADED":
                 resume_files.append({
                     "file_path": mp3_path,
                     "filename": track["id"],
@@ -138,12 +142,12 @@ def run_pipeline(urls=None, links_file=None, resume=False, config_overrides=None
                 })
                 logger.info(f"Resuming stuck track: {track['id']}")
             else:
-                # MP3 gone, need to re-download
+                # MP3 gone or status is DOWNLOADED (already deleted by old pipeline crash), need to re-download
                 trackdb.update_status(conn, track["id"], "DISCOVERED")
                 logger.info(f"Re-queuing for download: {track['id']}")
 
-    # 4. Filter out already-indexed URLs
-    existing_urls = {t.get("url") for t in trackdb.get_tracks(conn) if t.get("url")}
+    # 4. Filter out already-indexed URLs (only skip INDEXED tracks, not DISCOVERED ones)
+    existing_urls = {t.get("url") for t in trackdb.get_tracks(conn, status="INDEXED") if t.get("url")}
     
     original_count = len(urls)
     urls = [u for u in urls if u not in existing_urls]
@@ -256,6 +260,7 @@ def _run_with_progress(urls, resume_files, conn, config, results, shutdown_event
                     active_an[future] = rf
 
                 # Process futures as they complete across both pools
+                consecutive_errors = 0
                 while active_dl or active_an:
                     if shutdown_event.is_set():
                         break
@@ -323,7 +328,9 @@ def _run_with_progress(urls, resume_files, conn, config, results, shutdown_event
 
                             try:
                                 feature_dict = future.result(timeout=config["analysis"]["timeout"])
+                                consecutive_errors = 0
                             except Exception as e:
+                                consecutive_errors += 1
                                 results["failed"] += 1
                                 error_msg = f"Analysis failed: {track_info['filename']}: {e}"
                                 results["errors"].append(error_msg)
@@ -333,6 +340,12 @@ def _run_with_progress(urls, resume_files, conn, config, results, shutdown_event
                                 # Still clean up the MP3
                                 if delete_mp3:
                                     _safe_delete(track_info.get("file_path", ""), logger)
+
+                                if consecutive_errors >= 3:
+                                    console.print("\n[bold red]🚨 EMERGENCY ABORT: 3 consecutive track failures detected. Neural Network may be frozen or out of memory. Force quitting to protect OS.[/bold red]")
+                                    logger.critical("Emergency abort triggered due to 3 consecutive failures.")
+                                    os._exit(1)
+
                                 continue
 
                             # Store features in SQLite

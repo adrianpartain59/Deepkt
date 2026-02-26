@@ -12,7 +12,6 @@ Usage:
     python cli.py stats                 Show library statistics
     python cli.py features              Show all features and which are enabled
     python cli.py inspect <track-id>    Show all stored features for a track
-    python cli.py optimize              Find optimal feature weights for matching artists
     python cli.py crawl                 Crawl SoundCloud for new similar tracks
     python cli.py ingest                Move crawled links into the main pipeline
 """
@@ -188,13 +187,7 @@ def cmd_inspect(args):
         print(f"   {name:<22} {len(values):>4}  {search_flag:>9}  [{val_str}]")
 
 
-def cmd_optimize(args):
-    """Run weight optimization to improve artist grouping."""
-    try:
-        from scripts.optimize_weights import optimize
-        optimize()
-    except ImportError:
-        print("❌ Could not import scripts.optimize_weights script or its dependencies (like scipy).")
+# obsolete optimize command removed
 
 
 def cmd_pipeline(args):
@@ -342,8 +335,7 @@ def main():
     insp.set_defaults(func=cmd_inspect)
 
     # --- optimize ---
-    opt = subparsers.add_parser("optimize", help="Find optimal feature weights for grouping artists")
-    opt.set_defaults(func=cmd_optimize)
+    # Obsolete with Neural Networks
 
     # --- pipeline ---
     pipe = subparsers.add_parser("pipeline", help="Download + analyze in parallel")

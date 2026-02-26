@@ -130,17 +130,11 @@ def get_search_dimensions(config_path=DEFAULT_CONFIG_PATH):
     Returns:
         Integer total dimension count.
     """
-    from deepkt.features import EXTRACTOR_REGISTRY
     config = load_feature_config(config_path)
     total = 0
     for name in get_enabled_features(config_path):
         feature_cfg = config.get("features", {}).get(name, {})
-        extractor_cls = EXTRACTOR_REGISTRY.get(name)
-        if extractor_cls:
-            ext = extractor_cls()
-            # Some extractors have configurable dimensions (e.g., MFCC)
-            n = feature_cfg.get("dimensions", ext.dimensions)
-            total += n
+        total += feature_cfg.get("dimensions", 1)
     return total
 
 
@@ -178,18 +172,12 @@ def get_search_feature_names(config_path=DEFAULT_CONFIG_PATH):
     Returns:
         List of strings, one per dimension of the search vector.
     """
-    from deepkt.features import EXTRACTOR_REGISTRY
     config = load_feature_config(config_path)
     names = []
 
     for feature_name in get_enabled_features(config_path):
         feature_cfg = config.get("features", {}).get(feature_name, {})
-        extractor_cls = EXTRACTOR_REGISTRY.get(feature_name)
-        if not extractor_cls:
-            continue
-
-        ext = extractor_cls()
-        dims = feature_cfg.get("dimensions", ext.dimensions)
+        dims = feature_cfg.get("dimensions", 1)
 
         if dims == 1:
             # Simple name

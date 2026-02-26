@@ -9,10 +9,10 @@ import urllib.parse
 
 from deepkt.downloader import smart_download_range
 from deepkt.analyzer import analyze_snippet, build_search_vector
-from deepkt.indexer import get_collection, rebuild_search_index, query_similar, query_similar_weighted
+from deepkt.indexer import get_collection, rebuild_search_index, query_similar
 from deepkt.config import (
     get_enabled_features, get_search_feature_names, get_search_dimensions,
-    get_feature_weights, load_feature_config,
+    load_feature_config,
 )
 from deepkt import db as trackdb
 from deepkt.db import DEFAULT_DB_PATH
@@ -82,24 +82,7 @@ st.markdown("""
 FEATURE_NAMES = get_search_feature_names()
 SEARCH_DIMS = get_search_dimensions()
 ENABLED_FEATURES = get_enabled_features()
-DEFAULT_WEIGHTS = get_feature_weights()
 FEATURE_CONFIG = load_feature_config()
-
-# Human-readable labels and emoji for sidebar sliders
-FEATURE_DISPLAY = {
-    "tempo":                   ("tempo", "Match tracks with similar tempo (BPM)"),
-    "mfcc":                    ("mfcc", "The overall 'sound' — grit, warmth, character"),
-    "rms_energy":              ("rms_energy", "Dynamic ↔ compressed/loud"),
-    "hpss_ratio":              ("hpss_ratio", "Drums/808s vs Melodies/Pads"),
-    "mid_frequency_flatness":  ("mid_frequency_flatness", "Clean Synths ↔ Bit-Crushed Synths"),
-    "sub_band_energy":         ("sub_band_energy", "Wave Phonk ↔ Drift Phonk (Massive 808s)"),
-    "narrowband_crest":        ("narrowband_crest", "Soft Synths ↔ Heavy 808 Cowbells"),
-    "vocal_band_flux":         ("vocal_band_flux", "Instrumental ↔ Memphis Rap Chops"),
-    "time_domain_crest":       ("time_domain_crest", "Dynamic Bounce ↔ Brazilian Distortion/Loudness"),
-    "tempogram_ratio":         ("tempogram_ratio", "Straight 4/4 ↔ Syncopated Trap (with Kick Count)"),
-    "spectral_contrast_mean":  ("spectral_contrast_mean", "Muddy/Distorted ↔ Clean/Punchy Separation"),
-    "high_freq_percussion":    ("high_freq_percussion", "Smooth Pads ↔ Aggressive Sharp Hi-Hats/Snares"),
-}
 
 
 # ============================================================
@@ -135,46 +118,12 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # --- Feature Weight Sliders ---
-    st.markdown("### 🎚️ Feature Weights")
-    st.caption("Control how much each feature influences similarity search. Higher = more influence. 0 = ignore.")
-
-    # Initialize defaults in session state BEFORE widgets render
-    for feat_name in ENABLED_FEATURES:
-        if f"weight_{feat_name}" not in st.session_state:
-            st.session_state[f"weight_{feat_name}"] = DEFAULT_WEIGHTS.get(feat_name, 1.0)
-
-    if st.button("🔄 Reset to Recommended Defaults", use_container_width=True):
-        for feat_name in ENABLED_FEATURES:
-            st.session_state[f"weight_{feat_name}"] = DEFAULT_WEIGHTS.get(feat_name, 1.0)
-        st.rerun()
-
-    weights_override = {}
-    for feat_name in ENABLED_FEATURES:
-        label, tooltip = FEATURE_DISPLAY.get(feat_name, (feat_name, ""))
-        w = st.slider(
-            label,
-            min_value=0.0,
-            max_value=3.0,
-            step=0.1,
-            help=tooltip,
-            key=f"weight_{feat_name}",
-        )
-        weights_override[feat_name] = w
-
-    def _reset_weights():
-        for name in ENABLED_FEATURES:
-            st.session_state[f"weight_{name}"] = 1.0
-
-    def _zero_weights():
-        for name in ENABLED_FEATURES:
-            st.session_state[f"weight_{name}"] = 0.0
-
-    col_r, col_z = st.columns(2)
-    with col_r:
-        st.button("↩️ Reset All", use_container_width=True, on_click=_reset_weights)
-    with col_z:
-        st.button("🔇 Zero All", use_container_width=True, on_click=_zero_weights)
+    st.markdown("### 🧠 Neural Network Active")
+    st.info(
+        "Deepkt is powered by LAION-CLAP (Contrastive Language-Audio Pretraining).\n\n"
+        "Audio is analyzed into 512-dimensional semantic embeddings. "
+        "Matches are found using cosine distance across the latent space."
+    )
 
 
 # ============================================================
@@ -223,60 +172,10 @@ def render_results(results, query_name=""):
     conn.close()
 
 
-from deepkt.interpreter import SonicInterpreter
-
-@st.cache_resource
-def get_interpreter():
-    return SonicInterpreter(DEFAULT_DB_PATH)
-
 def render_feature_breakdown(feature_dict, track_id="query", use_expander=True, track_url=None):
     """Show semantic DNA breakdown."""
-    interpreter = get_interpreter()
-    # If stats aren't loaded (empty DB initially), try loading
-    if not interpreter.stats:
-        interpreter._load_stats(DEFAULT_DB_PATH)
-        
-    analysis = interpreter.interpret(feature_dict)
-    
-    # Helper for content
-    def _render_content():
-        # 1. Semantic Tags
-        if analysis.get("tags"):
-            st.markdown('<div style="margin-bottom:1rem;">', unsafe_allow_html=True)
-            for tag in analysis["tags"]:
-                st.markdown(f'<span class="match-badge match-high" style="margin-right:0.5rem; background:#333; border:1px solid #555;">{tag}</span>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-        # 2a. Tempo Display
-        bpm = analysis.get("Tempo", 0)
-        if bpm > 0:
-            st.markdown(f"**Tempo**: {bpm:.1f} BPM")
-            
-        metrics = [
-            ("⚡️ Energy", "Energy"),
-            ("🥁 Drum Focus", "Drum Focus"),
-            ("🎨 Timbre", "Timbre"),
-            ("📻 Synth Crushing", "Synth Crushing"),
-            ("🔊 808 Heaviness", "808 Heaviness"),
-            ("🪩 Dynamics", "Dynamics"),
-        ]
-        
-        for label, key in metrics:
-            score = analysis.get(key, 0)
-            st.write(f"**{label}**")
-            st.progress(int(score) / 100)
-        
-        # 3. Listen Button
-        if track_url:
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.link_button("🎧 Listen on SoundCloud", track_url, use_container_width=True)
-
-    if use_expander:
-        with st.expander("🧬 Sonic DNA Breakdown", expanded=False):
-            _render_content()
-    else:
-        st.markdown("##### 🧬 Sonic DNA Breakdown")
-        _render_content()
+    if track_url:
+        st.link_button("🎧 Listen on SoundCloud", track_url, use_container_width=True)
 
 
 
@@ -329,8 +228,9 @@ with tab_url:
 
             st.success(f"Analyzed: **{track_name}**")
             render_feature_breakdown(feature_dict, track_id="url_query", track_url=url)
-            results = query_similar_weighted(
-                feature_dict, weights_override,
+            search_vector = build_search_vector(feature_dict)
+            results = query_similar(
+                search_vector,
                 n_results=min(5, track_count),
             )
             render_results(results, query_name=track_name)
@@ -365,8 +265,9 @@ with tab_library:
 
             render_feature_breakdown(track["feature_data"], track_id=track["track_id"], track_url=track.get("url"))
 
-            results = query_similar_weighted(
-                track["feature_data"], weights_override,
+            search_vector = build_search_vector(track["feature_data"])
+            results = query_similar(
+                search_vector,
                 n_results=min(5, track_count),
                 exclude_id=track["track_id"],
             )

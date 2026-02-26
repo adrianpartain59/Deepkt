@@ -3,141 +3,17 @@
 # This defines the "DNA Recipe" — which audio features are extracted and
 # which are included in the search index.
 #
-# ALL features are always extracted and stored in SQLite. ALL are now
-# included in the ChromaDB search vector (43 dimensions total).
-#
-# "weight" controls how much influence each feature has during similarity
-# search. Weight is applied at query time — the stored index is unweighted.
-# A weight of 0.0 effectively disables a feature without re-indexing.
+# We now use LAION-CLAP neural network embeddings.
+# This produces a single 512-dimensional semantic vector.
+# Weighting is handled implicitly by the neural network during extraction.
 #
 # Increment `version` when changing which features are enabled.
 
-version: 4
+version: 5
 
 features:
-  tempo:
+  clap_embedding:
     enabled: true
-    weight: 2.25
-    dimensions: 1
-    description: "BPM — energy baseline"
-
-  mfcc:
-    enabled: true
-    weight: 1.54
-    n_coefficients: 13
-    dimensions: 13
-    description: "Timbre/texture — captures the 'grit' in Phonk"
-
-  spectral_centroid:
-    enabled: true
-    weight: 1.89
-    dimensions: 1
-    description: "Brightness — high=EDM leads, low=dark bass"
-
-  zero_crossing_rate:
-    enabled: true
-    weight: 1.53
-    dimensions: 1
-    description: "Noisiness/distortion — key Phonk signature"
-
-  spectral_contrast:
-    enabled: true
-    weight: 1.33
-    dimensions: 7
-    description: "Production punchiness — peak-to-valley per frequency band"
-
-  onset_strength:
-    enabled: true
-    weight: 2.69
-    dimensions: 1
-    description: "How hard the beats hit — percussive energy"
-
-  rms_energy:
-    enabled: true
-    weight: 1.75
-    dimensions: 1
-    description: "Perceived loudness — dynamic range"
-
-  chroma:
-    enabled: false
-    weight: 0.34
-    dimensions: 12
-    description: "Pitch class profile — which musical notes dominate"
-
-  tonnetz:
-    enabled: true
-    weight: 0.47
-    dimensions: 6
-    description: "Harmonic relationships — minor thirds key for Phonk"
-
-  hpss_ratio:
-    enabled: true
-    weight: 1.98
-    dimensions: 1
-    description: "Percussive-to-Harmonic Energy Ratio — isolates dense 808s and kicks from melodies"
-
-  spectral_flatness:
-    enabled: false
-    weight: 0.01
-    dimensions: 1
-    description: "Wiener Entropy — calculates the Lo-Fi hiss and white-noise presence"
-
-  hiss_density:
-    enabled: true
-    weight: 0.37
-    dimensions: 1
-    description: "Minimum high-frequency noise floor (detects continuous vinyl crackle)"
-
-  rolloff_ratio:
-    enabled: false
-    weight: 0.21
-    dimensions: 1
-    description: "Spectral Rolloff — high = sparkling/modern, low = muffled/lo-fi"
-
-  mid_frequency_flatness:
-    enabled: false
-    weight: 0.33
-    dimensions: 1
-    description: "Targeted Wiener Entropy — detects severely bit-crushed or overdriven synths in the mid-band"
-
-  sub_band_energy:
-    enabled: true
-    weight: 1.81
-    dimensions: 1
-    description: "Sub-bass to total energy ratio (Drift Phonk 808s)"
-
-  narrowband_crest:
-    enabled: false
-    weight: 0.13
-    dimensions: 1
-    description: "Spectral Crest Factor in 800-1200Hz (Phonk Cowbell detection)"
-
-  vocal_band_flux:
-    enabled: true
-    weight: 1.50
-    dimensions: 1
-    description: "Spectral Flux in 300-3000Hz (Memphis vocal chop aggression)"
-
-  time_domain_crest:
-    enabled: false
-    weight: 0.23
-    dimensions: 1
-    description: "Waveform Crest Factor (Brazilian Phonk limiter aggression)"
-
-  tempogram_ratio:
-    enabled: true
-    weight: 1.84
-    dimensions: 2
-    description: "Groove & Kick Density — tempo-invariant straightness (4/4 vs trap) and kick count"
-
-  spectral_contrast_mean:
-    enabled: false
-    weight: 0.46
-    dimensions: 1
-    description: "Mix Clarity — high=punchy separation, low=muddy/distorted"
-
-  high_freq_percussion:
-    enabled: true
-    weight: 1.57
-    dimensions: 1
-    description: "Hi-Hat/Snare Aggression — >4kHz crest factor (sharp vs smooth mix)"
+    weight: 1.0
+    dimensions: 512
+    description: "LAION-CLAP 512-d Semantic Audio Embedding"
