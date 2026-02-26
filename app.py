@@ -368,6 +368,55 @@ if st.session_state.get("player_active"):
                     st.rerun()
             else:
                 st.button("🏁 End of playlist", use_container_width=True, disabled=True)
+                
+        # --- Search Tab Triplet Integration ---
+        if idx > 0:
+            st.markdown("---")
+            st.markdown("##### 🏋️ Training Lab: Rate this Recommendation")
+            st.markdown(f"Anchor Track: **{playlist[0]['title']}**")
+            
+            rate_cols = st.columns(2)
+            
+            with rate_cols[0]:
+                if st.button("👍 Same Sub-Genre", use_container_width=True, key=f"rate_pos_{idx}", type="primary"):
+                    conn = trackdb.get_db()
+                    from deepkt.db import save_training_label
+                    # The anchor is always index 0 of the playlist
+                    anchor_id = playlist[0].get("id") or playlist[0].get("track_id")
+                    candidate_id = track.get("id") or track.get("track_id")
+                    
+                    if anchor_id and candidate_id and anchor_id != "query":
+                        save_training_label(conn, anchor_id, candidate_id, 1)
+                        st.toast("✅ Positive Rating Saved!")
+                    else:
+                        st.toast("⚠️ Cannot rate: Anchor is not indexed yet.", icon="⚠️")
+                    conn.close()
+                    
+                    # Auto-skip to next
+                    if idx < len(playlist) - 1:
+                        cleanup_old_clips(clip_cache, b64_cache, idx + 1)
+                        st.session_state["current_index"] = idx + 1
+                    st.rerun()
+                    
+            with rate_cols[1]:
+                if st.button("👎 Different Sub-Genre", use_container_width=True, key=f"rate_neg_{idx}"):
+                    conn = trackdb.get_db()
+                    from deepkt.db import save_training_label
+                    anchor_id = playlist[0].get("id") or playlist[0].get("track_id")
+                    candidate_id = track.get("id") or track.get("track_id")
+                    
+                    if anchor_id and candidate_id and anchor_id != "query":
+                        save_training_label(conn, anchor_id, candidate_id, 0)
+                        st.toast("✅ Negative Rating Saved!")
+                    else:
+                        st.toast("⚠️ Cannot rate: Anchor is not indexed yet.", icon="⚠️")
+                    conn.close()
+                    
+                    # Auto-skip to next
+                    if idx < len(playlist) - 1:
+                        cleanup_old_clips(clip_cache, b64_cache, idx + 1)
+                        st.session_state["current_index"] = idx + 1
+                    st.rerun()
 
     st.markdown("---")
 
@@ -491,8 +540,15 @@ else:
                     st.warning("No similar tracks found!")
                     st.stop()
 
-                # Build playlist — download the first track's clip to start
-                playlist = results
+                # Build playlist — query track first (as Anchor), then similar tracks
+                playlist = [{
+                    "track_id": track["track_id"],
+                    "artist": track["artist"],
+                    "title": track["title"],
+                    "url": track["url"],
+                    "match_pct": 100.0,
+                }] + results
+                
                 clip_cache = {}
                 b64_cache = {}
 

@@ -60,6 +60,25 @@ git push dev main:personal-dev
 > [!IMPORTANT]
 > The command `git push dev main:personal-dev` pushes the local `main` branch directly to the `dev` remote's `personal-dev` branch **without ever switching branches locally**. This protects `data/tracks.db` from being deleted.
 
+### Push Personal Data (Dev Repo Only)
+If you have generated valuable personal data (e.g., Training Lab triplets in `data/tracks.db`) or have large files that would take a long time to retrieve/rebuild, you should back them up **exclusively** to the private dev repository.
+
+Because `data/` is blocked by `.gitignore`, you must force-add the specific files, commit them, and push *only* to `dev`:
+
+```bash
+# 1. Force-add the specific ignored file
+git add -f data/tracks.db
+
+# 2. Commit the data backup
+git commit -m "chore(data): backup SQLite database"
+
+# 3. Push ONLY to the dev remote
+git push dev main:personal-dev
+```
+
+> [!WARNING]
+> Do **not** run `git push origin main` after force-adding data files, or you will accidentally publish your personal database to the public repository!
+
 ---
 
 ## .gitignore Behavior
