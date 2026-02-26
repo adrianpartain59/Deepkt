@@ -38,6 +38,7 @@
 .venv/bin/python3.12 cli.py stats                            # Library overview
 .venv/bin/python3.12 cli.py features                         # Show all 9 features
 .venv/bin/python3.12 cli.py inspect "HXVRMXN - Eclipse.mp3"  # All 43 feature values
+.venv/bin/python3.12 cli.py lab-status                       # Show Training Lab dataset stats
 ```
 *(To see the fully indexed map of how all tracks are grouped by Artist, view `docs/indexed_artists.md!)*
 

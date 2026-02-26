@@ -149,6 +149,70 @@ def cmd_features(args):
     print(f"\n   Total: {total_stored} stored, {total_search} in search index")
 
 
+def cmd_lab_status(args):
+    """Show statistics for the AI Training Lab triplets."""
+    from rich.console import Console
+    from rich.table import Table
+    from deepkt import db as trackdb
+    
+    console = Console()
+    conn = trackdb.get_db()
+    
+    stats_req = conn.execute('''
+        SELECT 
+            COUNT(*) as total_pairs,
+            SUM(label) as pos,
+            COUNT(*) - SUM(label) as neg,
+            COUNT(DISTINCT anchor_id) as anchors
+        FROM training_pairs
+    ''').fetchone()
+    
+    total = stats_req[0]
+    pos = stats_req[1] or 0
+    neg = stats_req[2] or 0
+    anchors = stats_req[3] or 0
+    
+    ratio = f"1:{neg/pos:.1f}" if pos > 0 else "N/A"
+    
+    console.print(f"\n[bold magenta]🏋️ AI Training Lab Status[/bold magenta]")
+    console.print(f"Total Triplets: [bold white]{total}[/bold white]")
+    console.print(f"Unique Anchors: [bold white]{anchors}[/bold white]")
+    console.print(f"Positives (1):  [bold green]{pos}[/bold green]")
+    console.print(f"Negatives (0):  [bold red]{neg}[/bold red]")
+    console.print(f"Ratio (+/-):    [bold cyan]{ratio}[/bold cyan]\n")
+
+    if total > 0:
+        table = Table(title="Recent 20 Training Pairs", show_header=True, header_style="bold magenta")
+        table.add_column("Anchor Artist", overflow="fold")
+        table.add_column("Anchor Title", overflow="fold")
+        table.add_column("Candidate Artist", overflow="fold")
+        table.add_column("Candidate Title", overflow="fold")
+        table.add_column("Label", justify="center")
+
+        recent = conn.execute('''
+            SELECT 
+                t1.artist as a_artist, t1.title as a_title,
+                t2.artist as c_artist, t2.title as c_title,
+                tp.label
+            FROM training_pairs tp
+            JOIN tracks t1 ON tp.anchor_id = t1.id
+            JOIN tracks t2 ON tp.candidate_id = t2.id
+            ORDER BY tp.id DESC
+            LIMIT 20
+        ''').fetchall()
+
+        for row in reversed(recent):
+            lbl = "[green]1 (Same)[/green]" if row[4] == 1 else "[red]0 (Diff)[/red]"
+            table.add_row(
+                row[0], row[1],
+                row[2], row[3],
+                lbl
+            )
+            
+        console.print(table)
+    
+    conn.close()
+
 def cmd_inspect(args):
     """Show all stored features for a specific track."""
     from deepkt import db as trackdb
@@ -354,6 +418,10 @@ def main():
     # --- ingest ---
     ing = subparsers.add_parser("ingest", help="Move approved URLs from crawled_links.txt into links.txt")
     ing.set_defaults(func=cmd_ingest)
+
+    # --- lab-status ---
+    labs = subparsers.add_parser("lab-status", help="Show AI Training Lab dataset statistics")
+    labs.set_defaults(func=cmd_lab_status)
 
     args = parser.parse_args()
     if not args.command:

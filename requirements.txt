@@ -124,3 +124,4 @@ websocket-client==1.9.0
 websockets==16.0
 yt-dlp==2026.2.4
 zipp==3.23.0
+plotly==6.5.2

@@ -54,10 +54,31 @@ def _init_tables(conn):
             extracted_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS training_pairs (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            anchor_id       TEXT NOT NULL REFERENCES tracks(id),
+            candidate_id    TEXT NOT NULL REFERENCES tracks(id),
+            label           INTEGER NOT NULL,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_status ON tracks(status);
         CREATE INDEX IF NOT EXISTS idx_artist ON tracks(artist);
+        CREATE INDEX IF NOT EXISTS idx_pairs ON training_pairs(anchor_id, candidate_id);
     """)
     conn.commit()
+
+def save_training_label(conn, anchor_id, candidate_id, label):
+    """Save a triplet label (1=positive, 0=negative) to the database."""
+    try:
+        conn.execute(
+            """INSERT INTO training_pairs (anchor_id, candidate_id, label) 
+               VALUES (?, ?, ?)""",
+            (anchor_id, candidate_id, label)
+        )
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Error saving training label: {e}")
 
 
 # ============================================================
