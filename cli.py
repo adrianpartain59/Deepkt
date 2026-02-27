@@ -66,7 +66,36 @@ def cmd_search(args):
         status_icon = "✅" if track["status"] == "INDEXED" else "⏳"
         print(f"  {status_icon} {track['artist']} - {track['title']}")
         print(f"     ID: {track['id']}  Status: {track['status']}")
-        print()
+        print("\n")
+
+
+def cmd_lab_undo(args):
+    """Wipe all training pairs generated for the most recently evaluated Anchor."""
+    from rich.console import Console
+    from deepkt import db as trackdb
+    
+    console = Console()
+    conn = trackdb.get_db()
+    
+    recent_anchor = conn.execute('''
+        SELECT anchor_id FROM training_pairs ORDER BY id DESC LIMIT 1
+    ''').fetchone()
+    
+    if not recent_anchor:
+        console.print("[yellow]The Training Lab database is already empty.[/yellow]")
+        conn.close()
+        return
+        
+    anchor_id = recent_anchor[0]
+    track_info = conn.execute("SELECT artist, title FROM tracks WHERE track_id = ?", (anchor_id,)).fetchone()
+    anchor_name = f"{track_info[0]} - {track_info[1]}" if track_info else anchor_id
+    
+    count = conn.execute("SELECT COUNT(*) FROM training_pairs WHERE anchor_id = ?", (anchor_id,)).fetchone()[0]
+    conn.execute("DELETE FROM training_pairs WHERE anchor_id = ?", (anchor_id,))
+    conn.commit()
+    conn.close()
+    
+    console.print(f"[bold red]Deleted {count} triplets[/bold red] associated with Anchor: [cyan]{anchor_name}[/cyan]")
 
 
 def cmd_similar(args):
@@ -250,6 +279,34 @@ def cmd_inspect(args):
             val_str = ", ".join(f"{v:.4f}" for v in values[:3]) + f", ... ({len(values)} total)"
         print(f"   {name:<22} {len(values):>4}  {search_flag:>9}  [{val_str}]")
 
+def cmd_lab_undo(args):
+    """Wipe all training pairs generated for the most recently evaluated Anchor."""
+    from rich.console import Console
+    from deepkt import db as trackdb
+    
+    console = Console()
+    conn = trackdb.get_db()
+    
+    recent_anchor = conn.execute('''
+        SELECT anchor_id FROM training_pairs ORDER BY id DESC LIMIT 1
+    ''').fetchone()
+    
+    if not recent_anchor:
+        console.print("[yellow]The Training Lab database is already empty.[/yellow]")
+        conn.close()
+        return
+        
+    anchor_id = recent_anchor[0]
+    track_info = conn.execute("SELECT artist, title FROM tracks WHERE id = ?", (anchor_id,)).fetchone()
+    anchor_name = f"{track_info[0]} - {track_info[1]}" if track_info else anchor_id
+    
+    count = conn.execute("SELECT COUNT(*) FROM training_pairs WHERE anchor_id = ?", (anchor_id,)).fetchone()[0]
+    conn.execute("DELETE FROM training_pairs WHERE anchor_id = ?", (anchor_id,))
+    conn.commit()
+    conn.close()
+    
+    console.print(f"[bold red]Deleted {count} triplets[/bold red] associated with Anchor: [cyan]{anchor_name}[/cyan]")
+
 
 # obsolete optimize command removed
 
@@ -422,6 +479,10 @@ def main():
     # --- lab-status ---
     labs = subparsers.add_parser("lab-status", help="Show AI Training Lab dataset statistics")
     labs.set_defaults(func=cmd_lab_status)
+
+    # --- lab-undo ---
+    labu = subparsers.add_parser("lab-undo", help="Wipe all triplets for the most recent Anchor")
+    labu.set_defaults(func=cmd_lab_undo)
 
     args = parser.parse_args()
     if not args.command:

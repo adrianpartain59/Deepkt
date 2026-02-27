@@ -370,6 +370,7 @@ if st.session_state.get("player_active"):
                 st.button("🏁 End of playlist", use_container_width=True, disabled=True)
                 
         # --- Search Tab Triplet Integration ---
+        anchor_id = playlist[0].get("id") or playlist[0].get("track_id")
         if idx > 0:
             st.markdown("---")
             st.markdown("##### 🏋️ Training Lab: Rate this Recommendation")
@@ -462,9 +463,50 @@ else:
                         st.error(f"Download failed: {e}")
                         st.stop()
 
-                with st.spinner("🧬 Extracting Sonic DNA..."):
+                with st.spinner("🧬 Extracting Sonic DNA & Indexing..."):
                     try:
                         feature_dict = analyze_snippet(downloaded_path)
+                        
+                        # Save the new track to the database
+                        from deepkt import db as trackdb
+                        from deepkt import indexer
+                        import json
+                        import os
+                        
+                        conn = trackdb.get_db()
+                        
+                        # Create a valid track_id (we use the filename)
+                        artist = result["artist"]
+                        title = result["title"]
+                        track_id = os.path.basename(downloaded_path)
+                        
+                        # Insert metadata
+                        conn.execute(
+                            "INSERT OR IGNORE INTO tracks (id, artist, title, url, status) VALUES (?, ?, ?, ?, ?)",
+                            (track_id, artist, title, url, "INDEXED")
+                        )
+                        
+                        # Insert features
+                        extractor_count = len(feature_dict)
+                        conn.execute(
+                            "INSERT OR REPLACE INTO track_features (track_id, feature_data, extractor_count) VALUES (?, ?, ?)",
+                            (track_id, json.dumps(feature_dict), extractor_count)
+                        )
+                        conn.commit()
+                        conn.close()
+                        
+                        # Add to the Vector Index
+                        collection = indexer.get_collection()
+                        search_vector = indexer.build_search_vector(feature_dict)
+                        
+                        collection.upsert(
+                            embeddings=[search_vector],
+                            ids=[track_id],
+                            metadatas=[{"artist": artist, "title": title, "url": url}]
+                        )
+                        
+                        st.success("Track analyzed and added to your Library!")
+                        
                     except Exception as e:
                         st.error(f"Analysis failed: {e}")
                         st.stop()
@@ -474,6 +516,7 @@ else:
                 results = query_similar(
                     search_vector,
                     n_results=min(20, track_count),
+                    exclude_id=track_id
                 )
 
                 if not results:
@@ -482,9 +525,9 @@ else:
 
                 # Build the playlist: query track first, then similar tracks
                 playlist = [{
-                    "id": "query",
-                    "artist": result["artist"],
-                    "title": result["title"],
+                    "id": track_id,
+                    "artist": artist,
+                    "title": title,
                     "url": url,
                     "match_pct": 100.0,
                 }] + results
@@ -656,17 +699,23 @@ else:
                 batch = batches[0]
                 candidates = batch["candidates"]
                 
-                # LOOKAHEAD TRIGGER: If getting close to finishing this batch and next batch isn't queued
-                if len(candidates) <= 3 and len(batches) < 2 and not loading:
+                # LOOKAHEAD TRIGGER: Always keep the next batch pre-loading in the background
+                if len(batches) < 2 and not loading:
                     fetch_lab_batch_async(st.session_state["lab_tmp_dir"])
 
                 # Render Anchor
                 st.markdown("---")
-                st.markdown("##### ⚓ Base Track (Anchor)")
-                anchor = batch["anchor"]
-                st.markdown(f"**{anchor['artist']}** — {anchor['title']}")
+                col_anchor_txt, col_anchor_btn = st.columns([3, 1])
+                with col_anchor_txt:
+                    st.markdown("##### ⚓ Base Track (Anchor)")
+                    anchor = batch["anchor"]
+                    st.markdown(f"**{anchor['artist']}** — {anchor['title']}")
+                with col_anchor_btn:
+                    if st.button("⏭️ Skip Anchor", use_container_width=True, help="Discard this anchor and its candidates without saving any labels"):
+                        batches.pop(0)
+                        st.rerun()
                 if batch["anchor_b64"]:
-                    render_audio_player_b64(batch["anchor_b64"], autoplay=True)
+                    render_audio_player_b64(batch["anchor_b64"], autoplay=False)
                 else:
                     st.warning("Audio unavailable.")
                 
