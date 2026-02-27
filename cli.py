@@ -190,25 +190,34 @@ def cmd_lab_status(args):
     stats_req = conn.execute('''
         SELECT 
             COUNT(*) as total_pairs,
-            SUM(label) as pos,
-            COUNT(*) - SUM(label) as neg,
+            SUM(CASE WHEN label = 1.0 THEN 1 ELSE 0 END) as p_match,
+            SUM(CASE WHEN label = 0.5 THEN 1 ELSE 0 END) as m_match,
+            SUM(CASE WHEN label = -0.5 THEN 1 ELSE 0 END) as m_neg,
+            SUM(CASE WHEN label = -1.0 THEN 1 ELSE 0 END) as c_neg,
             COUNT(DISTINCT anchor_id) as anchors
         FROM training_pairs
     ''').fetchone()
     
     total = stats_req[0]
-    pos = stats_req[1] or 0
-    neg = stats_req[2] or 0
-    anchors = stats_req[3] or 0
+    p_match = stats_req[1] or 0
+    m_match = stats_req[2] or 0
+    m_neg = stats_req[3] or 0
+    c_neg = stats_req[4] or 0
+    anchors = stats_req[5] or 0
     
-    ratio = f"1:{neg/pos:.1f}" if pos > 0 else "N/A"
+    # Combined for ratio
+    pos_total = p_match + m_match
+    neg_total = m_neg + c_neg
+    ratio = f"1:{neg_total/pos_total:.1f}" if pos_total > 0 else "N/A"
     
     console.print(f"\n[bold magenta]🏋️ AI Training Lab Status[/bold magenta]")
     console.print(f"Total Triplets: [bold white]{total}[/bold white]")
     console.print(f"Unique Anchors: [bold white]{anchors}[/bold white]")
-    console.print(f"Positives (1):  [bold green]{pos}[/bold green]")
-    console.print(f"Negatives (0):  [bold red]{neg}[/bold red]")
     console.print(f"Ratio (+/-):    [bold cyan]{ratio}[/bold cyan]\n")
+    console.print(f"🟢 Perfect Matches (1.0):   [bold green]{p_match}[/bold green]")
+    console.print(f"🟡 Medium Matches (0.5):    [green]{m_match}[/green]")
+    console.print(f"🟠 Medium Negatives (-0.5): [yellow]{m_neg}[/yellow]")
+    console.print(f"🔴 Complete Negatives (-1.0): [bold red]{c_neg}[/bold red]\n")
 
     if total > 0:
         table = Table(title="Recent 20 Training Pairs", show_header=True, header_style="bold magenta")
@@ -231,7 +240,16 @@ def cmd_lab_status(args):
         ''').fetchall()
 
         for row in reversed(recent):
-            lbl = "[green]1 (Same)[/green]" if row[4] == 1 else "[red]0 (Diff)[/red]"
+            val = float(row[4])
+            if val == 1.0:
+                lbl = "[bold green]1.0[/bold green]"
+            elif val == 0.5:
+                lbl = "[green]0.5[/green]"
+            elif val == -0.5:
+                lbl = "[yellow]-0.5[/yellow]"
+            else:
+                lbl = "[bold red]-1.0[/bold red]"
+                
             table.add_row(
                 row[0], row[1],
                 row[2], row[3],
@@ -306,6 +324,25 @@ def cmd_lab_undo(args):
     conn.close()
     
     console.print(f"[bold red]Deleted {count} triplets[/bold red] associated with Anchor: [cyan]{anchor_name}[/cyan]")
+
+
+def cmd_migrate_labels(args):
+    """One-time migration script: Converts binary (1/0) labels to float (1.0/-1.0)."""
+    from rich.console import Console
+    from deepkt import db as trackdb
+    console = Console()
+    conn = trackdb.get_db()
+    
+    # Update Positives
+    res_pos = conn.execute("UPDATE training_pairs SET label = 1.0 WHERE label = 1")
+    # Update Negatives
+    res_neg = conn.execute("UPDATE training_pairs SET label = -1.0 WHERE label = 0")
+    conn.commit()
+    
+    console.print(f"[bold green]Successfully migrated training pairs to 4-tier floats![/bold green]")
+    console.print(f"Positives Converted (1 -> 1.0): {res_pos.rowcount}")
+    console.print(f"Negatives Converted (0 -> -1.0): {res_neg.rowcount}")
+    conn.close()
 
 
 # obsolete optimize command removed
@@ -483,6 +520,10 @@ def main():
     # --- lab-undo ---
     labu = subparsers.add_parser("lab-undo", help="Wipe all triplets for the most recent Anchor")
     labu.set_defaults(func=cmd_lab_undo)
+    
+    # --- migrate-labels ---
+    mig = subparsers.add_parser("migrate-labels", help="Convert binary labels to 4-tier float labels")
+    mig.set_defaults(func=cmd_migrate_labels)
 
     args = parser.parse_args()
     if not args.command:

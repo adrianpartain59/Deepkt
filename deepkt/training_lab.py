@@ -157,7 +157,7 @@ def auto_balance_batch(anchor_id):
     
     # --- 1. POSITIVE BALANCING ---
     pos_count = conn.execute(
-        "SELECT COUNT(*) FROM training_pairs WHERE anchor_id = ? AND label = 1",
+        "SELECT COUNT(*) FROM training_pairs WHERE anchor_id = ? AND label > 0",
         (anchor_id,)
     ).fetchone()[0]
     
@@ -179,14 +179,14 @@ def auto_balance_batch(anchor_id):
                 try:
                     conn.execute(
                         "INSERT INTO training_pairs (anchor_id, candidate_id, label) VALUES (?, ?, ?)",
-                        (anchor_id, cand[0], 1)
+                        (anchor_id, cand[0], 1.0)
                     )
                 except trackdb.sqlite3.Error:
                     pass
     
     # --- 2. NEGATIVE BALANCING ---
     neg_count = conn.execute(
-        "SELECT COUNT(*) FROM training_pairs WHERE anchor_id = ? AND label = 0",
+        "SELECT COUNT(*) FROM training_pairs WHERE anchor_id = ? AND label < 0",
         (anchor_id,)
     ).fetchone()[0]
     
@@ -232,7 +232,7 @@ def auto_balance_batch(anchor_id):
                         try:
                             conn.execute(
                                 "INSERT INTO training_pairs (anchor_id, candidate_id, label) VALUES (?, ?, ?)",
-                                (anchor_id, t_id, 0)
+                                (anchor_id, t_id, -1.0)
                             )
                             injected += 1
                         except trackdb.sqlite3.Error:

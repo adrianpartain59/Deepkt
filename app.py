@@ -376,48 +376,35 @@ if st.session_state.get("player_active"):
             st.markdown("##### 🏋️ Training Lab: Rate this Recommendation")
             st.markdown(f"Anchor Track: **{playlist[0]['title']}**")
             
-            rate_cols = st.columns(2)
-            
+            def _handle_search_rating(rating_val, toast_msg):
+                conn = trackdb.get_db()
+                from deepkt.db import save_training_label
+                a_id = playlist[0].get("id") or playlist[0].get("track_id")
+                c_id = track.get("id") or track.get("track_id")
+                if a_id and c_id and a_id != "query":
+                    save_training_label(conn, a_id, c_id, rating_val)
+                    st.toast(toast_msg)
+                else:
+                    st.toast("⚠️ Cannot rate: Anchor is not indexed yet.", icon="⚠️")
+                conn.close()
+                if idx < len(playlist) - 1:
+                    cleanup_old_clips(clip_cache, b64_cache, idx + 1)
+                    st.session_state["current_index"] = idx + 1
+                st.rerun()
+
+            rate_cols = st.columns(4)
             with rate_cols[0]:
-                if st.button("👍 Same Sub-Genre", use_container_width=True, key=f"rate_pos_{idx}", type="primary"):
-                    conn = trackdb.get_db()
-                    from deepkt.db import save_training_label
-                    # The anchor is always index 0 of the playlist
-                    anchor_id = playlist[0].get("id") or playlist[0].get("track_id")
-                    candidate_id = track.get("id") or track.get("track_id")
-                    
-                    if anchor_id and candidate_id and anchor_id != "query":
-                        save_training_label(conn, anchor_id, candidate_id, 1)
-                        st.toast("✅ Positive Rating Saved!")
-                    else:
-                        st.toast("⚠️ Cannot rate: Anchor is not indexed yet.", icon="⚠️")
-                    conn.close()
-                    
-                    # Auto-skip to next
-                    if idx < len(playlist) - 1:
-                        cleanup_old_clips(clip_cache, b64_cache, idx + 1)
-                        st.session_state["current_index"] = idx + 1
-                    st.rerun()
-                    
+                if st.button("🟢 Perfect Match", use_container_width=True, key=f"rate_p_{idx}", type="primary"):
+                    _handle_search_rating(1.0, "✅ Perfect Match Saved!")
             with rate_cols[1]:
-                if st.button("👎 Different Sub-Genre", use_container_width=True, key=f"rate_neg_{idx}"):
-                    conn = trackdb.get_db()
-                    from deepkt.db import save_training_label
-                    anchor_id = playlist[0].get("id") or playlist[0].get("track_id")
-                    candidate_id = track.get("id") or track.get("track_id")
-                    
-                    if anchor_id and candidate_id and anchor_id != "query":
-                        save_training_label(conn, anchor_id, candidate_id, 0)
-                        st.toast("✅ Negative Rating Saved!")
-                    else:
-                        st.toast("⚠️ Cannot rate: Anchor is not indexed yet.", icon="⚠️")
-                    conn.close()
-                    
-                    # Auto-skip to next
-                    if idx < len(playlist) - 1:
-                        cleanup_old_clips(clip_cache, b64_cache, idx + 1)
-                        st.session_state["current_index"] = idx + 1
-                    st.rerun()
+                if st.button("🟡 Medium Match", use_container_width=True, key=f"rate_mp_{idx}"):
+                    _handle_search_rating(0.5, "✅ Medium Match Saved!")
+            with rate_cols[2]:
+                if st.button("🟠 Medium Negative", use_container_width=True, key=f"rate_mn_{idx}"):
+                    _handle_search_rating(-0.5, "✅ Medium Negative Saved!")
+            with rate_cols[3]:
+                if st.button("🔴 Complete Negative", use_container_width=True, key=f"rate_n_{idx}"):
+                    _handle_search_rating(-1.0, "✅ Complete Negative Saved!")
 
     st.markdown("---")
 
@@ -733,34 +720,32 @@ else:
                     else:
                         st.warning("Audio unavailable.")
 
+                    def _handle_lab_rating(rating_val):
+                        conn = trackdb.get_db()
+                        from deepkt.db import save_training_label
+                        save_training_label(conn, anchor["track_id"], track["track_id"], rating_val)
+                        conn.close()
+                        batch["candidates"].pop(0) # Next track!
+                        # Auto-balancing is currently disabled by user request
+                        # if len(batch["candidates"]) == 0:
+                        #     from deepkt.training_lab import auto_balance_batch
+                        #     auto_balance_batch(anchor["track_id"])
+                        st.rerun()
+
                     # The magical swipe buttons
-                    col1, col2 = st.columns(2)
+                    col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        if st.button("👍 Same Sub-Genre", use_container_width=True, type="primary"):
-                            conn = trackdb.get_db()
-                            from deepkt.db import save_training_label
-                            save_training_label(conn, anchor["track_id"], track["track_id"], 1)
-                            conn.close()
-                            batch["candidates"].pop(0) # Next track!
-                            
-                            if len(batch["candidates"]) == 0:
-                                from deepkt.training_lab import auto_balance_batch
-                                auto_balance_batch(anchor["track_id"])
-                                
-                            st.rerun()
+                        if st.button("🟢 Perfect Match", use_container_width=True, type="primary"):
+                            _handle_lab_rating(1.0)
                     with col2:
-                        if st.button("👎 Different Sub-Genre", use_container_width=True):
-                            conn = trackdb.get_db()
-                            from deepkt.db import save_training_label
-                            save_training_label(conn, anchor["track_id"], track["track_id"], 0)
-                            conn.close()
-                            batch["candidates"].pop(0) # Next track!
-                            
-                            if len(batch["candidates"]) == 0:
-                                from deepkt.training_lab import auto_balance_batch
-                                auto_balance_batch(anchor["track_id"])
-                                
-                            st.rerun()
+                        if st.button("🟡 Medium Match", use_container_width=True):
+                            _handle_lab_rating(0.5)
+                    with col3:
+                        if st.button("🟠 Medium Negative", use_container_width=True):
+                            _handle_lab_rating(-0.5)
+                    with col4:
+                        if st.button("🔴 Complete Negative", use_container_width=True):
+                            _handle_lab_rating(-1.0)
                 else:
                     st.success("Current batch complete!")
                     if len(batches) > 1:

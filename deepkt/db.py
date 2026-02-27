@@ -58,7 +58,7 @@ def _init_tables(conn):
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             anchor_id       TEXT NOT NULL REFERENCES tracks(id),
             candidate_id    TEXT NOT NULL REFERENCES tracks(id),
-            label           INTEGER NOT NULL,
+            label           REAL NOT NULL,
             created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
