@@ -111,6 +111,59 @@ FEATURE_CONFIG = load_feature_config()
 # --- Buffer config ---
 BUFFER_SIZE = 5  # Pre-buffer this many clips ahead
 
+@st.cache_data(ttl=60)
+def _get_discovered_artists():
+    """Fetch and filter newly discovered artists from SQLite, cached to prevent UI freeze."""
+    # 1. Load Seed Artists
+    seeds = set()
+    if os.path.exists("seed_artists.txt"):
+        with open("seed_artists.txt", "r") as f:
+            for line in f:
+                if line.strip():
+                    seeds.add(line.strip().lower())
+    if os.path.exists("discovery_seeds.txt"):
+        with open("discovery_seeds.txt", "r") as f:
+            for line in f:
+                if line.strip():
+                    seeds.add(line.strip().lower())
+    
+    # 2. Query all artists from the DB
+    import sqlite3
+    conn = sqlite3.connect("data/tracks.db")
+    conn.row_factory = sqlite3.Row
+    artist_data = conn.execute('''
+        SELECT artist, MAX(url) as sample_url, COUNT(*) as track_count
+        FROM tracks
+        GROUP BY artist
+        ORDER BY track_count DESC
+    ''').fetchall()
+    
+    # 3. Filter out Seed Artists
+    discovered = []
+    for row in artist_data:
+        artist_name = row["artist"]
+        sample_url = row["sample_url"]
+        track_count = row["track_count"]
+        
+        if sample_url:
+            parts = sample_url.split('/')
+            # e.g. https://soundcloud.com/lxst_cxntury/odyssey
+            if len(parts) >= 4 and parts[2] == "soundcloud.com":
+                profile_url = f"https://soundcloud.com/{parts[3]}".lower()
+            else:
+                profile_url = ""
+                
+            if profile_url and profile_url not in seeds:
+                discovered.append({
+                    "name": artist_name,
+                    "profile_url": profile_url,
+                    "count": track_count
+                })
+    conn.close()
+    return discovered
+
+BUFFER_SIZE = 5  # Pre-buffer this many clips ahead
+
 
 # ============================================================
 # Audio Player Helper
@@ -425,7 +478,7 @@ if st.session_state.get("player_active"):
 # Search View (shown when no player is active)
 # ============================================================
 else:
-    tab_url, tab_library, tab_clusters, tab_lab = st.tabs(["🔗  Search by URL", "📚  Search from Library", "🌌  Explore Clusters", "🏋️  Training Lab"])
+    tab_url, tab_library, tab_clusters, tab_lab, tab_discovery = st.tabs(["🔗  Search by URL", "📚  Search from Library", "🌌  Explore Clusters", "🏋️  Training Lab", "⭐  Artist Discovery"])
 
     # --- Tab 1: Search by URL ---
     with tab_url:
@@ -758,6 +811,103 @@ else:
                         import time
                         time.sleep(1)
                         st.rerun()
+# --- Tab 5: Artist Discovery ---
+    with tab_discovery:
+        st.markdown("### ⭐ New Artist Discovery")
+        st.markdown("Vibe-check artists discovered by the crawler and promote them to Seed Artists.")
+        
+        discovered_artists = _get_discovered_artists()
+        
+        if not discovered_artists:
+            st.info("No new artists to discover! Run the crawler to find more.")
+        else:
+            # Group into a format for the selectbox
+            artist_options = { f"{a['name']} ({a['count']} tracks)": a for a in discovered_artists }
+            selected_label = st.selectbox("Select an Artist to Audition:", list(artist_options.keys()))
+            selected_artist = artist_options[selected_label]
+            
+            st.markdown(f"**Profile:** [{selected_artist['profile_url']}]({selected_artist['profile_url']})")
+            
+            # Action Buttons
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🌟 Promote to Seed Artist", use_container_width=True, type="primary"):
+                    with open("discovery_seeds.txt", "a") as f:
+                        f.write(f"{selected_artist['profile_url']}\n")
+                    st.success(f"Added {selected_artist['name']} to discovery_seeds.txt!")
+                    
+                    # Clear the cache so the dropdown updates instantly
+                    _get_discovered_artists.clear()
+                    
+                    conn = trackdb.get_db()
+                    conn.close()
+                    st.rerun()
+            with col2:
+                if st.button("🗑️ Discard Artist & Purge Tracks", use_container_width=True):
+                    aname = selected_artist['name']
+                    conn = trackdb.get_db()
+                    tracks_to_purge = conn.execute("SELECT id FROM tracks WHERE artist = ?", (aname,)).fetchall()
+                    purge_ids = [t[0] for t in tracks_to_purge]
+                    
+                    # Delete from triplets (ensure candidate matches are wiped too)
+                    conn.execute("DELETE FROM training_pairs WHERE anchor_id IN (SELECT id FROM tracks WHERE artist = ?) OR candidate_id IN (SELECT id FROM tracks WHERE artist = ?)", (aname, aname))
+                    # Delete from features
+                    conn.execute("DELETE FROM track_features WHERE track_id IN (SELECT id FROM tracks WHERE artist = ?)", (aname,))
+                    # Delete from metadata
+                    conn.execute("DELETE FROM tracks WHERE artist = ?", (aname,))
+                    conn.commit()
+                    conn.close()
+                    
+                    if purge_ids:
+                        try:
+                            from deepkt.indexer import get_collection
+                            collection = get_collection()
+                            collection.delete(ids=purge_ids)
+                        except Exception:
+                            pass
+                            
+                    st.toast(f"🗑️ Purged {len(purge_ids)} tracks by {aname}.")
+                    st.rerun()
+
+            st.markdown("---")
+            st.markdown(f"#### Auditioning: {selected_artist['name']}")
+            
+            # We need a stable temporary directory to hold these audition files
+            import tempfile
+            discovery_tmp = st.session_state.setdefault("discovery_tmp_dir", tempfile.mkdtemp(prefix="deepkt_discovery_"))
+            
+            conn = trackdb.get_db()
+            top_tracks = conn.execute("SELECT * FROM tracks WHERE artist = ? ORDER BY id DESC LIMIT 5", (selected_artist['name'],)).fetchall()
+            
+            for t in top_tracks:
+                st.markdown(f"**{t['title']}**")
+                
+                audio_path = os.path.join(discovery_tmp, f"{t['id']}.mp3")
+                
+                # If we haven't downloaded this track's snippet yet, show a button to fetch it
+                if not os.path.exists(audio_path):
+                    if st.button("⬇️ Fetch Audio", key=f"fetch_{t['id']}"):
+                        with st.spinner(f"fetching snippet for {t['title']}..."):
+                            try:
+                                from deepkt.downloader import download_single
+                                res = download_single(t['url'], output_dir=discovery_tmp)
+                                if res and "file_path" in res and os.path.exists(res["file_path"]):
+                                    import shutil
+                                    shutil.move(res["file_path"], audio_path)
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"Could not load audio: {e}")
+                else:
+                    import base64
+                    with open(audio_path, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode("utf-8")
+                    render_audio_player_b64(b64, autoplay=False)
+            
+            # Safely close connection if we reached here
+            try:
+                conn.close()
+            except:
+                pass
 
 # --- Footer ---
 st.markdown("---")

@@ -134,6 +134,8 @@ class SoundCloudSpider:
 
     def get_seed_artists(self):
         results = set()
+        
+        # Original seeds
         seed_file = "seed_artists.txt"
         if os.path.exists(seed_file):
             with open(seed_file, 'r') as f:
@@ -143,6 +145,16 @@ class SoundCloudSpider:
                         results.add(url)
         else:
             self.console.print(f"[bold yellow]Warning: {seed_file} not found![/bold yellow]")
+            
+        # Newly promoted discovery seeds
+        discovery_file = "discovery_seeds.txt"
+        if os.path.exists(discovery_file):
+            with open(discovery_file, 'r') as f:
+                for line in f:
+                    url = line.strip()
+                    if url and not url.startswith('#'):
+                        results.add(url)
+                        
         return list(results)
 
     def crawl(self):
