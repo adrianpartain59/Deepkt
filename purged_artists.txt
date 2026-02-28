@@ -1,0 +1,2 @@
+# Artists perfectly purged from the Discovery UI blocklist.
+# The crawler will permanently ignore these profile URLs.

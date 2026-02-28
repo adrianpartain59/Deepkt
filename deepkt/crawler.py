@@ -48,6 +48,15 @@ class SoundCloudSpider:
                 self.visited = set(data.get("visited", []))
         else:
             self.visited = set()
+            
+        # Add purged/blocked artists so we never scrape them again
+        purged_file = "purged_artists.txt"
+        if os.path.exists(purged_file):
+            with open(purged_file, 'r') as f:
+                for line in f:
+                    url = line.strip()
+                    if url and not url.startswith('#'):
+                        self.visited.add(url.lower())
 
     def save_state(self):
         with open(CRAWLER_STATE_FILE, 'w') as f:

@@ -845,6 +845,12 @@ else:
             with col2:
                 if st.button("🗑️ Discard Artist & Purge Tracks", use_container_width=True):
                     aname = selected_artist['name']
+                    aurl = selected_artist['profile_url']
+                    
+                    if aurl:
+                        with open("purged_artists.txt", "a") as f:
+                            f.write(f"{aurl}\n")
+                            
                     conn = trackdb.get_db()
                     tracks_to_purge = conn.execute("SELECT id FROM tracks WHERE artist = ?", (aname,)).fetchall()
                     purge_ids = [t[0] for t in tracks_to_purge]
