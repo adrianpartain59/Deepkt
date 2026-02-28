@@ -75,6 +75,16 @@ def _analyze_worker(file_path):
     """
     return analyze_snippet(file_path)
 
+def _mute_worker():
+    import sys
+    import os
+    # Redirect low-level file descriptors to /dev/null
+    # This prevents C-level warnings (like macOS CoreAudio MallocStackLogging)
+    # from breaking the rich.progress bar in the main process.
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, sys.stdout.fileno())
+    os.dup2(devnull, sys.stderr.fileno())
+    os.close(devnull)
 
 # ============================================================
 # Main Pipeline
@@ -249,7 +259,7 @@ def _run_with_progress(urls, resume_files, conn, config, results, shutdown_event
             # Also queue resume files directly for analysis
             active_an = {}
             # --- Stage 2 & 3: Process downloads as they complete ---
-            with ProcessPoolExecutor(max_workers=an_workers) as an_executor:
+            with ProcessPoolExecutor(max_workers=an_workers, initializer=_mute_worker) as an_executor:
                 active_dl = dict(dl_futures)
 
                 # Submit resume files for analysis immediately

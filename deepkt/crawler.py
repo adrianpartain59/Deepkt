@@ -34,12 +34,12 @@ class SoundCloudSpider:
                      self.crawled_urls.add(url)
                      
         # Also load existing database tracks to prevent crawling them again
-        conn = trackdb.get_db(self.db_path)
-        tracks = trackdb.get_tracks(conn)
-        for t in tracks:
-             if 'url' in t and t['url']:
-                 self.crawled_urls.add(t['url'])
-        conn.close()
+        # conn = trackdb.get_db(self.db_path)
+        # tracks = trackdb.get_tracks(conn)
+        # for t in tracks:
+        #      if 'url' in t and t['url']:
+        #          self.crawled_urls.add(t['url'])
+        # conn.close()
 
     def load_state(self):
         if os.path.exists(CRAWLER_STATE_FILE):
@@ -48,15 +48,6 @@ class SoundCloudSpider:
                 self.visited = set(data.get("visited", []))
         else:
             self.visited = set()
-            
-        # Add purged/blocked artists so we never scrape them again
-        purged_file = "purged_artists.txt"
-        if os.path.exists(purged_file):
-            with open(purged_file, 'r') as f:
-                for line in f:
-                    url = line.strip()
-                    if url and not url.startswith('#'):
-                        self.visited.add(url.lower())
 
     def save_state(self):
         with open(CRAWLER_STATE_FILE, 'w') as f:
@@ -100,33 +91,93 @@ class SoundCloudSpider:
         return []
 
     def scrape_tracks(self, uid, permalink, num_tracks):
-        self.console.print(f"    [dim cyan]Extracting top {num_tracks} tracks using SoundCloud API...[/dim cyan]")
+        self.console.print(f"    [dim cyan]Extracting top {num_tracks} tracks (API + yt-dlp)...[/dim cyan]")
         extracted = []
+        
+        # 1. First, grab the top 30 tracks from the API directly
         try:
-            url = f'https://api-v2.soundcloud.com/users/{uid}/toptracks?client_id={self.client_id}&limit={num_tracks * 3}'
+            import requests
+            url = f'https://api-v2.soundcloud.com/users/{uid}/toptracks?client_id={self.client_id}&limit=50&linked_partitioning=1'
             res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
-            if res.status_code != 200:
-                self.console.print(f"    [dim red]API extraction failed (status {res.status_code})[/dim red]")
-                return []
-                
-            for entry in res.json().get('collection', []):
-                url = entry.get('permalink_url')
-                duration_ms = entry.get('duration')
-                
-                # Ensure it's original (starts with artist url path)
-                # And prevent getting "likes" or other pages
-                if url and not '/sets/' in url and f"soundcloud.com/{permalink}/" in url:
-                     if url not in self.crawled_urls:
-                         # Check duration to avoid adding tracks > 10 min (600,000 ms)
-                         if duration_ms is not None and duration_ms > 600000:
-                             self.console.print(f"      [dim yellow]Skipping long track ({duration_ms//1000}s): {url}[/dim yellow]")
-                             continue
-                             
-                         extracted.append(url)
-                         if len(extracted) >= num_tracks:
-                              break
+            if res.status_code == 200:
+                data = res.json()
+                for entry in data.get('collection', []):
+                    track_url = entry.get('permalink_url')
+                    duration_ms = entry.get('duration')
+                    if track_url and not '/sets/' in track_url and f"soundcloud.com/{permalink}/" in track_url:
+                        if track_url not in self.crawled_urls and track_url not in extracted:
+                            if duration_ms is not None and duration_ms > 600000:
+                                self.console.print(f"      [dim yellow]Skipping long track ({duration_ms//1000}s): {track_url}[/dim yellow]")
+                                continue
+                            extracted.append(track_url)
+                self.console.print(f"      [green]Extracted {len(extracted)} top tracks via API.[/green]")
         except Exception as e:
-            self.console.print(f"    [bold red]API extraction failed: {e}[/bold red]")
+            self.console.print(f"      [dim red]Failed API top tracks extraction: {e}[/dim red]")
+            
+        # 2. Then ask yt-dlp for the remaining chronological tracks up to num_tracks
+        chunk_size = 50
+        start_index = 1
+        max_attempts = 10 # Prevent infinite loops if they simply don't have 100 valid tracks
+        attempts = 0
+        
+        try:
+            import subprocess
+            import json
+            
+            while len(extracted) < num_tracks and attempts < max_attempts:
+                attempts += 1
+                end_index = start_index + chunk_size - 1
+                
+                # We use yt-dlp --flat-playlist to get their tracks, bypassing the API top-tracks limit & Datadome
+                artist_url = f"https://soundcloud.com/{permalink}"
+                cmd = [
+                    "yt-dlp",
+                    "-I", f"{start_index}:{end_index}",
+                    "--flat-playlist",
+                    "--dump-json",
+                    artist_url
+                ]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                lines = result.stdout.splitlines()
+                
+                # If yt-dlp returned absolutely nothing, we hit the exact end of their profile
+                if not lines:
+                    break
+                
+                for line in lines:
+                    if not line.strip(): continue
+                    try:
+                        entry = json.loads(line)
+                        track_url = entry.get('url')
+                        duration_ms = entry.get('duration', 0) * 1000 if entry.get('duration') else None
+                        
+                        # Use urlparse to properly check the path, preventing trailing slash issues
+                        from urllib.parse import urlparse
+                        if track_url and not '/sets/' in track_url:
+                             parsed = urlparse(track_url)
+                             # The path should start with /permalink/ (e.g. /lxst_cxntury/track-name)
+                             # but might just be exactly the permalink in some edge cases
+                             path_parts = parsed.path.strip('/').split('/')
+                             if len(path_parts) >= 2 and path_parts[0].lower() == permalink.lower():
+                                 if track_url not in self.crawled_urls and track_url not in extracted:
+                                     # Skip songs longer than 10 minutes
+                                     if duration_ms is not None and duration_ms > 600000:
+                                         self.console.print(f"      [dim yellow]Skipping long track ({duration_ms//1000}s): {track_url}[/dim yellow]")
+                                         continue
+                                     
+                                     extracted.append(track_url)
+                                     if len(extracted) >= num_tracks:
+                                          break
+                    except json.JSONDecodeError:
+                        continue
+                
+                # Move the pagination cursor forward for the next loop
+                start_index += chunk_size
+                
+        except Exception as e:
+            self.console.print(f"    [bold red]yt-dlp extraction failed: {e}[/bold red]")
+            
         return extracted
 
     def append_links(self, urls):
@@ -136,10 +187,8 @@ class SoundCloudSpider:
                 self.crawled_urls.add(u)
 
     def determine_tier(self, followers):
-        if followers > 50000: return 100
-        elif followers >= 10000: return 50
-        elif followers >= 1000: return 25
-        return 0
+        # The user wants exactly 130 tracks per seed artist (30 Top Tracks + 100 Recent)
+        return 130
 
     def get_seed_artists(self):
         results = set()
@@ -224,42 +273,7 @@ class SoundCloudSpider:
                           self.console.print(f"  [bold green]SAVED:[/bold green] Stored {len(seed_tracks)} tracks from seed. (Total new: {new_url_count})")
                      else:
                           self.console.print("  [dim yellow]EMPTY: yt-dlp returned 0 original tracks for seed.[/dim yellow]")
-                
-                # Get similar artists (Level 1)
-                followings = self.get_followings(uid, limit=10)
-                self.console.print(f"  Found {len(followings)} following networks.")
-                
-                for sim in followings:
-                     if new_url_count >= MAX_URLS: break
-                     
-                     sim_uid = sim.get('id')
-                     sim_permalink = sim.get('permalink')
-                     sim_url = f"https://soundcloud.com/{sim_permalink}"
-                     sim_followers = sim.get('followers_count', 0)
-                     
-                     if sim_url in self.visited:
-                          continue
-                          
-                     self.console.print(f"  -> [bold]SIMILAR:[/bold] {sim.get('username')} ([cyan]{sim_followers:,}[/cyan] followers)")
-                     
-                     tracks_to_grab = self.determine_tier(sim_followers)
-                     if tracks_to_grab == 0:
-                          self.console.print("        [dim]SKIP: Too small (<1000 followers).[/dim]")
-                     else:
-                          self.console.print(f"        [green]TIER HIT:[/green] Authorized for {tracks_to_grab} tracks.")
-                          tracks = self.scrape_tracks(sim_uid, sim_permalink, tracks_to_grab)
-                          if tracks:
-                               self.append_links(tracks)
-                               new_url_count += len(tracks)
-                               progress.update(crawl_task, advance=len(tracks))
-                               self.console.print(f"        [bold green]SAVED:[/bold green] Stored {len(tracks)} tracks. (Total new: {new_url_count})")
-                          else:
-                               self.console.print("        [dim yellow]EMPTY: yt-dlp returned 0 original tracks (all reposts/blocked).[/dim yellow]")
                                
-                     self.visited.add(sim_url)
-                     self.save_state()
-                     time.sleep(1) # Be polite to SoundCloud
-                     
                 self.visited.add(seed_url)
                 self.save_state()
                 
