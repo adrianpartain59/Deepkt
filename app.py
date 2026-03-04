@@ -3,6 +3,9 @@ Deepkt — Streamlit UI for sonic similarity search with integrated music player
 """
 
 import streamlit as st
+import logging
+# Suppress Streamlit's aggressive background thread warnings that cause terminal stutter
+logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").setLevel(logging.ERROR)
 import os
 import base64
 import tempfile
@@ -87,6 +90,8 @@ st.markdown("""
         font-size: 0.8rem; color: #666; text-transform: uppercase;
         letter-spacing: 1.5px; margin-bottom: 0.5rem;
     }
+# No-op to trigger multi_replace evaluation, but I need to see if there's any other blocking import.
+
     .now-playing-dot {
         display: inline-block; width: 8px; height: 8px;
         background: #e040fb; border-radius: 50%;
@@ -478,7 +483,14 @@ if st.session_state.get("player_active"):
 # Search View (shown when no player is active)
 # ============================================================
 else:
-    tab_url, tab_library, tab_clusters, tab_lab, tab_discovery = st.tabs(["🔗  Search by URL", "📚  Search from Library", "🌌  Explore Clusters", "🏋️  Training Lab", "⭐  Artist Discovery"])
+    tab_url, tab_library, tab_clusters, tab_lab, tab_discovery, tab_autocurate = st.tabs([
+        "🔗 URL", 
+        "📚 Library", 
+        "🌌 Clusters", 
+        "🏋️ Lab", 
+        "⭐ Discover", 
+        "🤖 Curate"
+    ])
 
     # --- Tab 1: Search by URL ---
     with tab_url:
@@ -596,23 +608,28 @@ else:
             st.info("Your library is empty. Add links to `links.txt`, run **Analyze** then **Reindex**.")
         else:
             conn = trackdb.get_db()
-            all_features = trackdb.get_all_features(conn)
+            all_metadata = trackdb.get_all_metadata(conn)
             conn.close()
 
             track_options = {
                 f"{t['artist']} - {t['title']}": i
-                for i, t in enumerate(all_features)
+                for i, t in enumerate(all_metadata)
             }
             selected = st.selectbox("Pick a track from your library", list(track_options.keys()))
 
             if st.button("🔍 Find Similar", type="primary", use_container_width=True):
                 idx = track_options[selected]
-                track = all_features[idx]
+                track = all_metadata[idx]
 
                 # Create temp dir for clips
                 tmp_dir = tempfile.mkdtemp(prefix="deepkt_player_")
+                
+                # Fetch features just for this track
+                conn = trackdb.get_db()
+                feature_data = trackdb.get_features(conn, track["track_id"])
+                conn.close()
 
-                search_vector = build_search_vector(track["feature_data"])
+                search_vector = build_search_vector(feature_data)
                 results = query_similar(
                     search_vector,
                     n_results=min(20, track_count),
@@ -657,11 +674,20 @@ else:
         else:
             n_clusters = st.slider("Number of Sub-Genres (Clusters)", min_value=2, max_value=20, value=5)
 
-            with st.spinner("Crunching vectors..."):
-                from deepkt.clustering import compute_clusters
-                import plotly.express as px
+            df = None
+            centroids = []
 
-                df, centroids = compute_clusters(n_clusters=n_clusters)
+            if st.button("🗺️ Generate Sub-Genre Map", type="primary"):
+                st.session_state["show_clusters_n"] = n_clusters
+                
+            if st.session_state.get("show_clusters_n"):
+                # Use the chosen or saved number of clusters
+                n_curr = st.session_state["show_clusters_n"]
+                with st.spinner("Crunching vectors..."):
+                    from deepkt.clustering import compute_clusters
+                    import plotly.express as px
+    
+                    df, centroids = compute_clusters(n_clusters=n_curr)
 
             if df is not None and not df.empty:
                 # 1. 2D Scatter Plot
@@ -729,12 +755,10 @@ else:
             if len(batches) == 0:
                 if not loading:
                     fetch_lab_batch_async(st.session_state["lab_tmp_dir"])
-                    st.rerun() 
+                    st.session_state["needs_rerun"] = True 
                 else:
                     st.info("⏳ Initializing Lab... (Hunting for hard candidates & pre-buffering audio)")
-                    import time
-                    time.sleep(1) # simple polling loop
-                    st.rerun()
+                    st.session_state["needs_rerun"] = True
             else:
                 batch = batches[0]
                 candidates = batch["candidates"]
@@ -808,9 +832,7 @@ else:
                             st.rerun()
                     else:
                         st.info("⏳ Still buffering next batch...")
-                        import time
-                        time.sleep(1)
-                        st.rerun()
+                        st.session_state["needs_rerun"] = True
 # --- Tab 5: Artist Discovery ---
     with tab_discovery:
         st.markdown("### ⭐ New Artist Discovery")
@@ -908,6 +930,143 @@ else:
                 conn.close()
             except:
                 pass
+
+# --- Tab 6: Auto-Curate Artist ---
+    with tab_autocurate:
+        st.markdown("### 🤖 Auto-Curate Artist")
+        st.markdown("Paste a SoundCloud artist profile link. Deepkt will automatically grab their Top 30 and most recent 100 tracks, analyze them, and add them to your library.")
+        
+        artist_url = st.text_input("SoundCloud Artist URL", placeholder="https://soundcloud.com/lxst_cxntury", key="autocurate_url_input")
+        
+        if st.button("🚀 Start Auto-Curation", use_container_width=True, type="primary"):
+            if not artist_url.strip():
+                st.error("Please enter an artist URL.")
+            else:
+                # Trigger the background process
+                st.session_state["autocurate_bg"] = {
+                    "artist_url": artist_url.strip(),
+                    "fetching": True,
+                    "urls": [],
+                    "total": 0,
+                    "error": None
+                }
+                st.session_state["autocurate_running"] = True
+                
+                # Clear any old thread state
+                st.session_state.pop("autocurate_thread", None)
+                st.rerun()
+
+        # Render progress if running
+        if st.session_state.get("autocurate_running"):
+            bg = st.session_state.get("autocurate_bg", {})
+            is_fetching = bg.get("fetching", False)
+            urls = bg.get("urls", [])
+            total = bg.get("total", 1)
+            err = bg.get("error")
+            
+            # Check if background thread is running
+            if "autocurate_thread" not in st.session_state or not st.session_state["autocurate_thread"].is_alive():
+                # We need to start the background pipeline
+                import threading
+                
+                def _pipeline_worker(bg_state):
+                    from deepkt.crawler import extract_artist_urls
+                    try:
+                        extracted = extract_artist_urls(bg_state["artist_url"], num_tracks=130)
+                        bg_state["urls"] = extracted
+                        bg_state["total"] = len(extracted)
+                    except Exception as e:
+                        bg_state["error"] = str(e)
+                        bg_state["urls"] = []
+                        bg_state["total"] = 0
+                    
+                    # Mark fetching as done so UI updates to pipeline view
+                    bg_state["fetching"] = False
+                    
+                    if bg_state.get("urls"):
+                        from deepkt.pipeline import run_pipeline
+                        from deepkt.indexer import rebuild_search_index
+                        try:
+                            run_pipeline(urls=bg_state["urls"], resume=False)
+                            rebuild_search_index()
+                        except Exception as p_err:
+                            bg_state["error"] = f"Pipeline execution crashed: {str(p_err)}"
+                
+                # Only start if we are supposed to be fetching (i.e. fresh start)
+                if is_fetching:
+                    t = threading.Thread(target=_pipeline_worker, args=(bg,), daemon=True)
+                    t.start()
+                    st.session_state["autocurate_thread"] = t
+            
+            # Setup progress vars
+            import time
+            
+            if is_fetching:
+                st.info("🔍 Fetching artist profile and track list... (this usually takes 1-2 minutes)")
+                with st.spinner("Scraping SoundCloud..."):
+                    st.session_state["needs_rerun"] = True
+            elif err:
+                st.error(f"Error extracting artist: {err}")
+                st.session_state["autocurate_running"] = False
+            elif not urls:
+                st.warning("No valid tracks could be extracted.")
+                st.session_state["autocurate_running"] = False
+            else:
+                from deepkt.pipeline import get_pipeline_status
+                from deepkt import db as trackdb
+                
+                status = get_pipeline_status()
+                
+                # Simple check of how many of these specific URLs are INDEXED or FAILED
+                conn = trackdb.get_db()
+                placeholders = ','.join(['?'] * len(urls))
+                if urls:
+                    query = f"SELECT status, count(*) FROM tracks WHERE url IN ({placeholders}) GROUP BY status"
+                    rows = conn.execute(query, urls).fetchall()
+                else:
+                    rows = []
+                conn.close()
+                
+                url_stats = {r[0]: r[1] for r in rows}
+                indexed = url_stats.get("INDEXED", 0)
+                failed = url_stats.get("FAILED", 0)
+                downloading = url_stats.get("DOWNLOADING", 0)
+                analyzing = url_stats.get("ANALYZING", 0)
+                downloaded = url_stats.get("DOWNLOADED", 0)
+                discovered = url_stats.get("DISCOVERED", 0)
+                
+                completed = indexed + failed
+                
+                st.progress(completed / total if total > 0 else 1.0, text=f"Processing {completed}/{total} tracks...")
+                cols = st.columns(4)
+                cols[0].metric("Downloading", downloading)
+                cols[1].metric("Analyzing", analyzing + downloaded)
+                cols[2].metric("Indexed", indexed)
+                cols[3].metric("Failed", failed)
+                
+                if status.get("failed_recent"):
+                    st.warning("Recent pipeline failures:")
+                    for f in status["failed_recent"][:3]:
+                        st.caption(f"{f['id']}: {f['error']}")
+                        
+                if st.session_state["autocurate_thread"].is_alive():
+                    with st.spinner("Pipeline running in background..."):
+                        st.session_state["needs_rerun"] = True
+                else:
+                    st.session_state["autocurate_running"] = False
+                    st.success("🎉 Auto-curation complete! The search index has been rebuilt.")
+                    
+            st.markdown("---")
+
+# ============================================================
+# Global Polling Loop (Prevents script abortion before tab render)
+# ============================================================
+if st.session_state.get("needs_rerun", False):
+    st.session_state["needs_rerun"] = False
+    import time
+    time.sleep(1.5)
+    st.rerun()
+
 
 # --- Footer ---
 st.markdown("---")

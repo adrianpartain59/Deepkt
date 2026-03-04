@@ -208,8 +208,23 @@ def get_features(conn, track_id):
     return None
 
 
+def get_all_metadata(conn):
+    """Get all stored track metadata without the heavy features.
+
+    Returns:
+        List of dicts: [{track_id, artist, title, url}, ...]
+    """
+    rows = conn.execute("""
+        SELECT id as track_id, artist, title, url
+        FROM tracks
+        WHERE status = 'INDEXED'
+        ORDER BY artist, title
+    """).fetchall()
+
+    return [dict(row) for row in rows]
+
 def get_all_features(conn):
-    """Get all stored features with track metadata.
+    """Get all stored features with track metadata. (Warning: Heavy memory footprint)
 
     Returns:
         List of dicts: [{track_id, artist, title, feature_data: {...}}, ...]

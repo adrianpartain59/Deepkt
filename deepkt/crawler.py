@@ -130,8 +130,10 @@ class SoundCloudSpider:
                 
                 # We use yt-dlp --flat-playlist to get their tracks, bypassing the API top-tracks limit & Datadome
                 artist_url = f"https://soundcloud.com/{permalink}"
+                import sys
                 cmd = [
-                    "yt-dlp",
+                    sys.executable,
+                    "-m", "yt_dlp",
                     "-I", f"{start_index}:{end_index}",
                     "--flat-playlist",
                     "--dump-json",
@@ -278,3 +280,28 @@ class SoundCloudSpider:
                 self.save_state()
                 
         self.console.print(f"\n[bold magenta]🕸️ Spider Sleep.[/bold magenta] Added {new_url_count} tracks to {CRAWLED_LINKS_FILE}.")
+
+def extract_artist_urls(artist_url, num_tracks=130):
+    """
+    Standalone function to extract up to `num_tracks` for a specific artist.
+    Useful for UI-driven extraction of a single artist.
+    """
+    spider = SoundCloudSpider()
+    if not spider.client_id and not spider.extract_client_id():
+        raise ValueError("Could not extract SoundCloud Client ID. SoundCloud may be blocking requests.")
+        
+    user_data = spider.resolve_user(artist_url)
+    if not user_data:
+        raise ValueError(f"Could not resolve the artist URL. Please verify the link is valid: {artist_url}")
+        
+    uid = user_data.get('id')
+    permalink = user_data.get('permalink')
+    
+    # Clear crawled_urls so it doesn't skip tracks that might have been discovered but not pipeline'd
+    spider.crawled_urls = set()
+    
+    extracted = spider.scrape_tracks(uid, permalink, num_tracks)
+    if not extracted:
+        raise ValueError(f"No valid tracks found for artist {permalink}.")
+        
+    return extracted

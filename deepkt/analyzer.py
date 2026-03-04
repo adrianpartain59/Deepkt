@@ -8,28 +8,31 @@ Returns a single 512-dimensional vector that represents the Sonic DNA of the tra
 import warnings
 import librosa
 import numpy as np
-import torch
-from transformers import ClapModel, ClapProcessor
+import warnings
+import numpy as np
 
 # Suppress warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # --- Initialize LAION-CLAP Neural Network ---
-# Load model onto Apple Silicon MPS if available, otherwise fallback to CPU
-DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
 _processor = None
 _model = None
+_device = None
 
 def _setup_model():
     """Lazy initialize the neural network on the first call per worker process."""
-    global _processor, _model
+    global _processor, _model, _device
     if _processor is not None and _model is not None:
         return True
 
-    print(f"Loading LAION-CLAP Neural Network to {DEVICE}...")
+    import torch
+    from transformers import ClapModel, ClapProcessor
+    _device = "mps" if torch.backends.mps.is_available() else "cpu"
+    
+    print(f"Loading LAION-CLAP Neural Network to {_device}...")
     try:
         _processor = ClapProcessor.from_pretrained("laion/clap-htsat-unfused")
-        _model = ClapModel.from_pretrained("laion/clap-htsat-unfused").to(DEVICE)
+        _model = ClapModel.from_pretrained("laion/clap-htsat-unfused").to(_device)
         _model.eval()
         return True
     except Exception as e:
@@ -53,6 +56,8 @@ def analyze_snippet(file_path, config_path=None):
         return {"clap_embedding": [0.0] * 512}
 
     try:
+        import librosa
+        import torch
         # 1. Load audio at exactly 48kHz (CLAP requirement)
         y, sr = librosa.load(file_path, sr=48000)
 
@@ -60,7 +65,7 @@ def analyze_snippet(file_path, config_path=None):
         y_trimmed, _ = librosa.effects.trim(y, top_db=20)
 
         # 3. Process through Neural Network
-        inputs = _processor(audio=y_trimmed, sampling_rate=48000, return_tensors="pt").to(DEVICE)
+        inputs = _processor(audio=y_trimmed, sampling_rate=48000, return_tensors="pt").to(_device)
         
         with torch.no_grad():
             outputs = _model.get_audio_features(**inputs)
@@ -71,7 +76,7 @@ def analyze_snippet(file_path, config_path=None):
         # Explicit memory cleanup to prevent MPS memory creep
         del inputs
         del outputs
-        if DEVICE == "mps":
+        if _device == "mps":
             torch.mps.empty_cache()
         
         return {"clap_embedding": embedding}

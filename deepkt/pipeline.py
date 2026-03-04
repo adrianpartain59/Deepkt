@@ -190,8 +190,12 @@ def run_pipeline(urls=None, links_file=None, resume=False, config_overrides=None
         console.print("\n[yellow]⚠️  Interrupt received. Finishing current tasks... (Press Ctrl+C again to force quit)[/yellow]")
         shutdown_event.set()
 
-    original_handler = signal.getsignal(signal.SIGINT)
-    signal.signal(signal.SIGINT, handle_interrupt)
+    import threading
+    is_main_thread = threading.current_thread() is threading.main_thread()
+    
+    if is_main_thread:
+        original_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, handle_interrupt)
 
     try:
         _run_with_progress(
@@ -204,7 +208,8 @@ def run_pipeline(urls=None, links_file=None, resume=False, config_overrides=None
             logger=logger,
         )
     finally:
-        signal.signal(signal.SIGINT, original_handler)
+        if is_main_thread:
+            signal.signal(signal.SIGINT, original_handler)
         conn.close()
 
         # Clean up empty temp dir
