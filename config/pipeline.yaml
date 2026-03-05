@@ -19,3 +19,11 @@ cleanup:
 progress:
   show_bar: true          # Rich progress bars
   log_file: data/pipeline.log
+
+discovery:
+  similarity_threshold: 0.95   # Min avg cosine similarity to pass gate
+  probe_count: 3               # Tracks to analyze per candidate artist
+  target_tracks: 5000          # Stop after this many tracks added to crawled_links.txt
+  rate_limit_pause: 1.0        # Pause between API calls
+  playlists_per_keyword: 20    # Max playlists to fetch per keyword search
+

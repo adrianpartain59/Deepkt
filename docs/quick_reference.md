@@ -20,6 +20,17 @@
 .venv/bin/python3.12 cli.py ingest                           # Move URLs to links.txt for pipeline
 ```
 
+### Audio-Gated Discovery
+```bash
+.venv/bin/python3.12 cli.py discover                         # Find new artists via seed likes + audio similarity
+.venv/bin/python3.12 cli.py discover --target 100            # Stop after 100 tracks
+.venv/bin/python3.12 cli.py discover --threshold 0.65        # Lower similarity gate (default 0.70)
+.venv/bin/python3.12 cli.py discover --probe-count 2         # Fewer probe tracks per candidate
+.venv/bin/python3.12 cli.py discover-log                     # View all candidate history
+.venv/bin/python3.12 cli.py discover-log --status APPROVED   # Only approved artists
+.venv/bin/python3.12 cli.py discover-log --status REJECTED   # Only rejected artists
+```
+
 ### Analysis & Indexing
 ```bash
 .venv/bin/python3.12 cli.py reindex                          # Rebuild ChromaDB search index

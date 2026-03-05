@@ -90,6 +90,96 @@ class SoundCloudSpider:
              return res.json().get('collection', [])
         return []
 
+    def get_user_likes(self, user_id, limit=50):
+        """Fetch a user's liked tracks from the SoundCloud API.
+
+        Returns:
+            List of track dicts from the API (each has 'user', 'permalink_url', etc.)
+        """
+        url = f'https://api-v2.soundcloud.com/users/{user_id}/likes?client_id={self.client_id}&limit={limit}'
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+        if res.status_code == 200:
+            collection = res.json().get('collection', [])
+            # Each item in likes has a 'track' key with the actual track data
+            tracks = []
+            for item in collection:
+                track = item.get('track')
+                if track and track.get('permalink_url'):
+                    tracks.append(track)
+            return tracks
+        return []
+
+    def search_playlists(self, query, limit=20):
+        """Search SoundCloud for playlists matching a query.
+
+        Args:
+            query: Search term (e.g. 'drift phonk').
+            limit: Max playlists to return.
+
+        Returns:
+            List of playlist dicts with id, title, description, track_count, etc.
+        """
+        if not self.client_id:
+            if not self.extract_client_id():
+                return []
+
+        url = (f'https://api-v2.soundcloud.com/search/playlists'
+               f'?q={query}&client_id={self.client_id}&limit={limit}')
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+        if res.status_code == 200:
+            return res.json().get('collection', [])
+        return []
+
+    def get_playlist_tracks(self, playlist_id):
+        """Get all tracks from a specific playlist.
+
+        Handles SoundCloud's behavior of returning stub objects (only id)
+        for large playlists by batch-resolving them via the /tracks endpoint.
+
+        Args:
+            playlist_id: SoundCloud playlist ID.
+
+        Returns:
+            List of track dicts with user, permalink_url, duration, etc.
+        """
+        if not self.client_id:
+            if not self.extract_client_id():
+                return []
+
+        url = (f'https://api-v2.soundcloud.com/playlists/{playlist_id}'
+               f'?client_id={self.client_id}&representation=full')
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+        if res.status_code != 200:
+            return []
+
+        data = res.json()
+        tracks = data.get('tracks', [])
+
+        # Separate full tracks from stubs (stubs only have 'id')
+        full_tracks = []
+        stub_ids = []
+        for t in tracks:
+            if t.get('permalink_url') and t.get('user'):
+                full_tracks.append(t)
+            elif t.get('id'):
+                stub_ids.append(str(t['id']))
+
+        # Batch-resolve stubs in groups of 50
+        if stub_ids:
+            self.console.print(f"      [dim]Resolving {len(stub_ids)} stub tracks...[/dim]")
+            for i in range(0, len(stub_ids), 50):
+                batch = stub_ids[i:i+50]
+                ids_param = ','.join(batch)
+                resolve_url = (f'https://api-v2.soundcloud.com/tracks'
+                               f'?ids={ids_param}&client_id={self.client_id}')
+                r = requests.get(resolve_url, headers={'User-Agent': 'Mozilla/5.0'})
+                if r.status_code == 200:
+                    resolved = r.json()
+                    full_tracks.extend(resolved)
+                time.sleep(0.3)
+
+        return full_tracks
+
     def scrape_tracks(self, uid, permalink, num_tracks):
         self.console.print(f"    [dim cyan]Extracting top {num_tracks} tracks (API + yt-dlp)...[/dim cyan]")
         extracted = []

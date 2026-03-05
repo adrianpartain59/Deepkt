@@ -28,6 +28,7 @@ st.set_page_config(
     page_title="Deepkt",
     page_icon="🔊",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 # --- Custom CSS ---
@@ -101,7 +102,7 @@ st.markdown("""
         0%, 100% { opacity: 1; transform: scale(1); }
         50% { opacity: 0.5; transform: scale(0.8); }
     }
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
+    #MainMenu {visibility: hidden;} footer {visibility: hidden;}
     hr { border-color: var(--border) !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -607,62 +608,242 @@ else:
         if stats.get("INDEXED", 0) == 0:
             st.info("Your library is empty. Add links to `links.txt`, run **Analyze** then **Reindex**.")
         else:
+            search_mode = st.radio(
+                "Search by",
+                ["🎵 Track", "🎤 Artist"],
+                horizontal=True,
+                key="library_mode",
+            )
+
             conn = trackdb.get_db()
             all_metadata = trackdb.get_all_metadata(conn)
             conn.close()
 
-            track_options = {
-                f"{t['artist']} - {t['title']}": i
-                for i, t in enumerate(all_metadata)
-            }
-            selected = st.selectbox("Pick a track from your library", list(track_options.keys()))
-
-            if st.button("🔍 Find Similar", type="primary", use_container_width=True):
-                idx = track_options[selected]
-                track = all_metadata[idx]
-
-                # Create temp dir for clips
-                tmp_dir = tempfile.mkdtemp(prefix="deepkt_player_")
-                
-                # Fetch features just for this track
-                conn = trackdb.get_db()
-                feature_data = trackdb.get_features(conn, track["track_id"])
-                conn.close()
-
-                search_vector = build_search_vector(feature_data)
-                results = query_similar(
-                    search_vector,
-                    n_results=min(20, track_count),
-                    exclude_id=track["track_id"],
+            # ---- Track Search Mode ----
+            if search_mode == "🎵 Track":
+                search_query = st.text_input(
+                    "🔍 Search your library",
+                    placeholder="Type to filter by artist or title...",
+                    key="library_search",
                 )
 
-                if not results:
-                    st.warning("No similar tracks found!")
-                    st.stop()
+                all_tracks = [
+                    {"label": f"{t['artist']} - {t['title']}", "index": i}
+                    for i, t in enumerate(all_metadata)
+                ]
 
-                # Build playlist — query track first (as Anchor), then similar tracks
-                playlist = [{
-                    "track_id": track["track_id"],
-                    "artist": track["artist"],
-                    "title": track["title"],
-                    "url": track["url"],
-                    "match_pct": 100.0,
-                }] + results
-                
-                clip_cache = {}
-                b64_cache = {}
+                if search_query.strip():
+                    query_lower = search_query.strip().lower()
+                    filtered = [t for t in all_tracks if query_lower in t["label"].lower()]
+                else:
+                    filtered = all_tracks
 
-                with st.spinner(f"🎵 Loading player — buffering {BUFFER_SIZE} tracks..."):
-                    prefill_buffer_sync(playlist, clip_cache, b64_cache, tmp_dir, start_from=0)
+                if not filtered:
+                    st.warning(f"No tracks matching **\"{search_query}\"**")
+                else:
+                    st.caption(f"Showing {len(filtered)} of {len(all_tracks)} tracks")
 
-                st.session_state["player_active"] = True
-                st.session_state["playlist"] = playlist
-                st.session_state["current_index"] = 0
-                st.session_state["clip_cache"] = clip_cache
-                st.session_state["b64_cache"] = b64_cache
-                st.session_state["player_tmp_dir"] = tmp_dir
-                st.session_state["query_track_name"] = selected
-                st.rerun()
+                    selected = st.selectbox(
+                        "Pick a track",
+                        options=[t["label"] for t in filtered],
+                        label_visibility="collapsed",
+                    )
+
+                    if st.button("🔍 Find Similar Tracks", type="primary", use_container_width=True):
+                        sel_entry = next(t for t in filtered if t["label"] == selected)
+                        idx = sel_entry["index"]
+                        track = all_metadata[idx]
+
+                        tmp_dir = tempfile.mkdtemp(prefix="deepkt_player_")
+                        conn = trackdb.get_db()
+                        feature_data = trackdb.get_features(conn, track["track_id"])
+                        conn.close()
+
+                        search_vector = build_search_vector(feature_data)
+                        results = query_similar(
+                            search_vector,
+                            n_results=min(20, track_count),
+                            exclude_id=track["track_id"],
+                        )
+
+                        if not results:
+                            st.warning("No similar tracks found!")
+                            st.stop()
+
+                        playlist = [{
+                            "track_id": track["track_id"],
+                            "artist": track["artist"],
+                            "title": track["title"],
+                            "url": track["url"],
+                            "match_pct": 100.0,
+                        }] + results
+
+                        clip_cache = {}
+                        b64_cache = {}
+                        with st.spinner(f"🎵 Loading player — buffering {BUFFER_SIZE} tracks..."):
+                            prefill_buffer_sync(playlist, clip_cache, b64_cache, tmp_dir, start_from=0)
+
+                        st.session_state["player_active"] = True
+                        st.session_state["playlist"] = playlist
+                        st.session_state["current_index"] = 0
+                        st.session_state["clip_cache"] = clip_cache
+                        st.session_state["b64_cache"] = b64_cache
+                        st.session_state["player_tmp_dir"] = tmp_dir
+                        st.session_state["query_track_name"] = selected
+                        st.rerun()
+
+            # ---- Artist Search Mode ----
+            else:
+                import numpy as np
+
+                @st.cache_data(ttl=120)
+                def _compute_artist_centroids():
+                    """Compute average CLAP embedding per artist."""
+                    conn = trackdb.get_db()
+                    all_features = trackdb.get_all_features(conn)
+                    conn.close()
+
+                    # Group embeddings by artist
+                    artist_tracks = {}  # artist -> list of {vec, track_id, title, url}
+                    for t in all_features:
+                        vec = build_search_vector(t["feature_data"])
+                        if vec is not None and len(vec) == 512:
+                            artist = t["artist"]
+                            if artist not in artist_tracks:
+                                artist_tracks[artist] = []
+                            artist_tracks[artist].append({
+                                "vec": np.array(vec, dtype=np.float32),
+                                "track_id": t["track_id"],
+                                "title": t["title"],
+                                "url": t["url"],
+                            })
+
+                    # Compute centroids
+                    centroids = {}
+                    for artist, tracks in artist_tracks.items():
+                        vecs = np.array([t["vec"] for t in tracks])
+                        centroids[artist] = {
+                            "centroid": vecs.mean(axis=0),
+                            "tracks": tracks,
+                            "count": len(tracks),
+                        }
+                    return centroids
+
+                # Search filter for artists
+                artist_query = st.text_input(
+                    "🔍 Search artists",
+                    placeholder="Type to filter artists...",
+                    key="artist_search",
+                )
+
+                centroids = _compute_artist_centroids()
+                artist_names = sorted(centroids.keys(), key=str.lower)
+
+                if artist_query.strip():
+                    q = artist_query.strip().lower()
+                    artist_names = [a for a in artist_names if q in a.lower()]
+
+                if not artist_names:
+                    st.warning(f"No artists matching **\"{artist_query}\"**")
+                else:
+                    st.caption(f"{len(artist_names)} artists")
+
+                    selected_artist = st.selectbox(
+                        "Pick an artist",
+                        options=artist_names,
+                        label_visibility="collapsed",
+                    )
+
+                    if st.button("🔍 Find Similar Artists", type="primary", use_container_width=True):
+                        query_centroid = centroids[selected_artist]["centroid"]
+                        query_norm = np.linalg.norm(query_centroid)
+                        if query_norm == 0:
+                            st.error("Could not compute centroid for this artist.")
+                            st.stop()
+                        query_normed = query_centroid / query_norm
+
+                        # Compute similarity to all other artists
+                        similarities = []
+                        for artist, data in centroids.items():
+                            if artist == selected_artist:
+                                continue
+                            c = data["centroid"]
+                            c_norm = np.linalg.norm(c)
+                            if c_norm == 0:
+                                continue
+                            sim = float(np.dot(query_normed, c / c_norm))
+                            similarities.append((artist, sim, data))
+
+                        similarities.sort(key=lambda x: x[1], reverse=True)
+                        top_artists = similarities[:15]
+
+                        if not top_artists:
+                            st.warning("No similar artists found!")
+                            st.stop()
+
+                        st.markdown(f"### Artists similar to **{selected_artist}**")
+                        st.caption(f"Based on {centroids[selected_artist]['count']} indexed tracks")
+
+                         # Find closest track pairs for each similar artist
+                        query_centroid_normed = query_normed  # already normalized above
+
+                        for rank, (artist, sim, data) in enumerate(top_artists, 1):
+                            match_class = "match-high" if sim >= 0.92 else ("match-mid" if sim >= 0.85 else "match-low")
+                            pct = f"{sim:.1%}"
+
+                            with st.expander(f"**#{rank} {artist}** — {pct} similar ({data['count']} tracks)", expanded=(rank <= 3)):
+                                # Rank candidate's tracks by similarity to query artist's centroid
+                                cand_tracks = data["tracks"]
+                                cand_vecs = np.array([t["vec"] for t in cand_tracks])
+                                cand_norms = np.linalg.norm(cand_vecs, axis=1, keepdims=True)
+                                cand_norms[cand_norms == 0] = 1.0
+                                cand_vecs_normed = cand_vecs / cand_norms
+
+                                # Similarity of each candidate track to query artist's average
+                                centroid_sims = cand_vecs_normed @ query_centroid_normed
+                                sorted_indices = np.argsort(centroid_sims)[::-1]
+
+                                st.markdown(f"**Tracks most similar to {selected_artist}'s vibe:**")
+                                for pi, ci in enumerate(sorted_indices[:5], 1):
+                                    ct = cand_tracks[int(ci)]
+                                    track_sim = float(centroid_sims[int(ci)])
+                                    st.markdown(
+                                        f"{pi}. **{ct['title']}** — {track_sim:.1%} "
+                                        f"· [▶️ Listen]({ct['url']})"
+                                    )
+
+                                # Play button — builds playlist from this artist's closest tracks
+                                if st.button(f"🎵 Play {artist}'s closest tracks", key=f"play_artist_{rank}",
+                                             use_container_width=True):
+                                    tmp_dir = tempfile.mkdtemp(prefix="deepkt_player_")
+
+                                    # Sort candidate tracks by similarity to query artist's centroid
+                                    play_sorted = np.argsort(centroid_sims)[::-1]
+
+                                    playlist = []
+                                    for ci in play_sorted[:20]:
+                                        ct = cand_tracks[int(ci)]
+                                        playlist.append({
+                                            "track_id": ct["track_id"],
+                                            "artist": artist,
+                                            "title": ct["title"],
+                                            "url": ct["url"],
+                                            "match_pct": round(float(centroid_sims[int(ci)]) * 100, 1),
+                                        })
+
+                                    clip_cache = {}
+                                    b64_cache = {}
+                                    with st.spinner(f"🎵 Loading player — buffering tracks..."):
+                                        prefill_buffer_sync(playlist, clip_cache, b64_cache, tmp_dir, start_from=0)
+
+                                    st.session_state["player_active"] = True
+                                    st.session_state["playlist"] = playlist
+                                    st.session_state["current_index"] = 0
+                                    st.session_state["clip_cache"] = clip_cache
+                                    st.session_state["b64_cache"] = b64_cache
+                                    st.session_state["player_tmp_dir"] = tmp_dir
+                                    st.session_state["query_track_name"] = f"Artists like {selected_artist}"
+                                    st.rerun()
 
     # --- Tab 3: Explore Clusters ---
     with tab_clusters:

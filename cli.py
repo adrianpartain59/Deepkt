@@ -446,6 +446,91 @@ def cmd_ingest(args):
     print("💡 Run 'cli.py pipeline' to begin downloading and analyzing.")
 
 
+def cmd_discover(args):
+    """Run playlist-based audio-gated artist discovery."""
+    from deepkt.discovery import run_discovery
+    from deepkt.config import load_pipeline_config
+
+    config = load_pipeline_config()
+    disc_config = config.get("discovery", {})
+
+    target = args.target or disc_config.get("target_tracks", 5000)
+    threshold = args.threshold or disc_config.get("similarity_threshold", 0.95)
+    probe_count = args.probe_count or disc_config.get("probe_count", 3)
+    playlists_per_keyword = disc_config.get("playlists_per_keyword", 20)
+
+    run_discovery(
+        target_tracks=target,
+        threshold=threshold,
+        probe_count=probe_count,
+        playlists_per_keyword=playlists_per_keyword,
+    )
+
+
+def cmd_discover_log(args):
+    """Show discovery candidate history for threshold tuning."""
+    from rich.console import Console
+    from rich.table import Table
+    from deepkt import db as trackdb
+
+    console = Console()
+    conn = trackdb.get_db()
+
+    # Get candidates, optionally filtered
+    candidates = trackdb.get_candidates(conn, status=args.status)
+
+    if not candidates:
+        status_msg = f" with status '{args.status}'" if args.status else ""
+        console.print(f"[yellow]No discovery candidates found{status_msg}.[/yellow]")
+        conn.close()
+        return
+
+    # Summary stats
+    stats = trackdb.get_discovery_stats(conn)
+    console.print(f"\n[bold magenta]🧬 Discovery Log[/bold magenta]")
+    for status, count in sorted(stats.items()):
+        if status != "total":
+            color = "green" if status in ("APPROVED", "PROMOTED") else "red" if status == "REJECTED" else "cyan"
+            console.print(f"   [{color}]{status}: {count}[/{color}]")
+    console.print(f"   Total: {stats.get('total', 0)}\n")
+
+    # Table of candidates
+    table = Table(title="Discovery Candidates", show_header=True, header_style="bold magenta")
+    table.add_column("Artist", overflow="fold")
+    table.add_column("Seen", justify="center")
+    table.add_column("Similarity", justify="center")
+    table.add_column("Followers", justify="right")
+    table.add_column("Status", justify="center")
+
+    for c in candidates[:50]:  # Limit display to 50
+        sim_str = f"{c['avg_similarity']:.1%}" if c.get("avg_similarity") else "—"
+        status = c["status"]
+
+        if status in ("APPROVED", "PROMOTED"):
+            status_str = f"[bold green]{status}[/bold green]"
+        elif status == "REJECTED":
+            status_str = f"[bold red]{status}[/bold red]"
+        else:
+            status_str = f"[cyan]{status}[/cyan]"
+
+        followers = f"{c.get('followers', 0):,}" if c.get("followers") else "?"
+
+        table.add_row(
+            c.get("permalink", c["artist_url"]),
+            str(c.get("times_seen", 1)),
+            sim_str,
+            followers,
+            status_str,
+        )
+
+    console.print(table)
+
+    if len(candidates) > 50:
+        console.print(f"\n[dim](Showing first 50 of {len(candidates)} candidates)[/dim]")
+
+    conn.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="deepkt",
@@ -512,6 +597,18 @@ def main():
     # --- ingest ---
     ing = subparsers.add_parser("ingest", help="Move approved URLs from crawled_links.txt into links.txt")
     ing.set_defaults(func=cmd_ingest)
+
+    # --- discover ---
+    disc = subparsers.add_parser("discover", help="Audio-gated artist discovery from seed likes")
+    disc.add_argument("--target", type=int, default=None, help="Target number of tracks to discover (default: from config)")
+    disc.add_argument("--threshold", type=float, default=None, help="Similarity threshold 0-1 (default: from config)")
+    disc.add_argument("--probe-count", type=int, default=None, help="Tracks to probe per candidate (default: from config)")
+    disc.set_defaults(func=cmd_discover)
+
+    # --- discover-log ---
+    dlog = subparsers.add_parser("discover-log", help="View discovery candidate history")
+    dlog.add_argument("--status", default=None, help="Filter by status (PENDING, APPROVED, REJECTED, PROMOTED)")
+    dlog.set_defaults(func=cmd_discover_log)
 
     # --- lab-status ---
     labs = subparsers.add_parser("lab-status", help="Show AI Training Lab dataset statistics")

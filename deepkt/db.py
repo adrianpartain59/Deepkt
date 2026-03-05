@@ -62,9 +62,31 @@ def _init_tables(conn):
             created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS discovery_candidates (
+            artist_url      TEXT PRIMARY KEY,
+            permalink       TEXT,
+            followers       INTEGER DEFAULT 0,
+            times_seen      INTEGER DEFAULT 1,
+            avg_similarity  REAL,
+            status          TEXT DEFAULT 'PENDING',
+            discovered_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS discovery_log (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_url   TEXT NOT NULL,
+            probe_track_url TEXT,
+            similarity_score REAL,
+            nearest_track_id TEXT,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_status ON tracks(status);
         CREATE INDEX IF NOT EXISTS idx_artist ON tracks(artist);
         CREATE INDEX IF NOT EXISTS idx_pairs ON training_pairs(anchor_id, candidate_id);
+        CREATE INDEX IF NOT EXISTS idx_disc_status ON discovery_candidates(status);
+        CREATE INDEX IF NOT EXISTS idx_disc_log_candidate ON discovery_log(candidate_url);
     """)
     conn.commit()
 
@@ -265,3 +287,107 @@ def get_tracks_missing_features(conn):
         (expected_count,)
     ).fetchall()
     return [row["track_id"] for row in rows]
+
+
+# ============================================================
+# Discovery Candidates
+# ============================================================
+
+def register_candidate(conn, artist_url, permalink, followers=0):
+    """Register or update a discovery candidate artist.
+
+    Idempotent — increments times_seen on conflict.
+    """
+    now = datetime.now().isoformat()
+    existing = conn.execute(
+        "SELECT times_seen FROM discovery_candidates WHERE artist_url = ?",
+        (artist_url,)
+    ).fetchone()
+
+    if existing:
+        conn.execute(
+            "UPDATE discovery_candidates SET times_seen = times_seen + 1, updated_at = ? WHERE artist_url = ?",
+            (now, artist_url)
+        )
+    else:
+        conn.execute(
+            """INSERT INTO discovery_candidates (artist_url, permalink, followers, discovered_at, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (artist_url, permalink, followers, now, now)
+        )
+    conn.commit()
+
+
+def update_candidate_status(conn, artist_url, status, avg_similarity=None):
+    """Update a candidate's status and optionally their avg_similarity."""
+    now = datetime.now().isoformat()
+    if avg_similarity is not None:
+        conn.execute(
+            "UPDATE discovery_candidates SET status = ?, avg_similarity = ?, updated_at = ? WHERE artist_url = ?",
+            (status, avg_similarity, now, artist_url)
+        )
+    else:
+        conn.execute(
+            "UPDATE discovery_candidates SET status = ?, updated_at = ? WHERE artist_url = ?",
+            (status, now, artist_url)
+        )
+    conn.commit()
+
+
+def get_candidates(conn, status=None):
+    """Get discovery candidates, optionally filtered by status.
+
+    Returns:
+        List of dicts.
+    """
+    query = "SELECT * FROM discovery_candidates"
+    params = []
+    if status:
+        query += " WHERE status = ?"
+        params.append(status)
+    query += " ORDER BY times_seen DESC, discovered_at DESC"
+    rows = conn.execute(query, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def log_probe(conn, candidate_url, probe_track_url, similarity, nearest_id):
+    """Log an individual probe result for threshold tuning."""
+    conn.execute(
+        """INSERT INTO discovery_log (candidate_url, probe_track_url, similarity_score, nearest_track_id)
+           VALUES (?, ?, ?, ?)""",
+        (candidate_url, probe_track_url, similarity, nearest_id)
+    )
+    conn.commit()
+
+
+def get_discovery_log(conn, candidate_url=None, limit=100):
+    """Get probe history, optionally filtered by candidate.
+
+    Returns:
+        List of dicts.
+    """
+    query = "SELECT * FROM discovery_log"
+    params = []
+    if candidate_url:
+        query += " WHERE candidate_url = ?"
+        params.append(candidate_url)
+    query += " ORDER BY created_at DESC"
+    if limit:
+        query += " LIMIT ?"
+        params.append(limit)
+    rows = conn.execute(query, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_discovery_stats(conn):
+    """Get discovery candidate counts grouped by status.
+
+    Returns:
+        Dict of {status: count} plus 'total'.
+    """
+    rows = conn.execute(
+        "SELECT status, COUNT(*) as count FROM discovery_candidates GROUP BY status"
+    ).fetchall()
+    stats = {row["status"]: row["count"] for row in rows}
+    stats["total"] = sum(stats.values())
+    return stats
