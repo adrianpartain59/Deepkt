@@ -17,6 +17,7 @@ Flow:
 import os
 import time
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
 from rich.console import Console
@@ -161,8 +162,8 @@ def search_and_rank_playlists(spider, keywords, playlists_per_keyword=20):
 def audio_probe(spider, candidate_url, probe_count=3, temp_dir="data/discovery_tmp"):
     """Download and analyze a few tracks from a candidate artist.
 
-    Downloads probe_count top tracks as 30-second snippets, runs them
-    through LAION-CLAP, then deletes the MP3s immediately.
+    Downloads probe_count top tracks as 30-second snippets in parallel,
+    runs them through LAION-CLAP, then deletes the MP3s immediately.
 
     Args:
         spider: SoundCloudSpider instance.
@@ -199,41 +200,53 @@ def audio_probe(spider, candidate_url, probe_count=3, temp_dir="data/discovery_t
     except Exception:
         return [], []
 
-    probe_vectors = []
-    probe_urls = []
-
+    # Filter valid probe candidates
+    probe_candidates = []
     for track in tracks[:probe_count]:
         track_url = track.get("permalink_url")
         if not track_url:
             continue
-
-        # Skip sets/playlists and very long tracks
         if "/sets/" in track_url:
             continue
         duration_ms = track.get("duration", 0)
         if duration_ms and duration_ms > 600000:
             continue
+        probe_candidates.append(track_url)
 
+    if not probe_candidates:
+        return [], []
+
+    # Download all probes in parallel
+    def _download_and_analyze(track_url):
+        """Download a single track and return (embedding, url) or None."""
         try:
-            # Download 30-second snippet
             dl_result = download_single(track_url, output_dir=temp_dir)
             file_path = dl_result["file_path"]
 
-            # Analyze through LAION-CLAP
             features = analyze_snippet(file_path)
             embedding = features.get("clap_embedding", [])
 
-            if embedding and any(v != 0.0 for v in embedding):
-                probe_vectors.append(embedding)
-                probe_urls.append(track_url)
-
-            # Delete MP3 immediately
+            # Clean up immediately
             if os.path.exists(file_path):
                 os.remove(file_path)
 
+            if embedding and any(v != 0.0 for v in embedding):
+                return (embedding, track_url)
         except Exception as e:
             console.print(f"      [dim red]Probe failed for {track_url}: {e}[/dim red]")
-            continue
+        return None
+
+    probe_vectors = []
+    probe_urls = []
+
+    # Use threads for parallel I/O (downloads), serial for CLAP (CPU)
+    with ThreadPoolExecutor(max_workers=min(len(probe_candidates), 3)) as pool:
+        futures = {pool.submit(_download_and_analyze, url): url for url in probe_candidates}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                probe_vectors.append(result[0])
+                probe_urls.append(result[1])
 
     return probe_vectors, probe_urls
 
@@ -242,33 +255,19 @@ def audio_probe(spider, candidate_url, probe_count=3, temp_dir="data/discovery_t
 # Step 3: Similarity Gate
 # ============================================================
 
-def similarity_gate(probe_vectors, probe_urls, candidate_url, conn, threshold=0.93):
-    """Compare probe tracks against the library's global centroid.
-
-    Computes the average vector of all indexed tracks, then measures
-    cosine similarity of each probe vector against that centroid.
-    Averages the per-probe similarities to decide pass/fail.
+def compute_library_centroid(conn):
+    """Pre-compute the normalized centroid of all indexed tracks.
 
     Args:
-        probe_vectors: List of 512-d float lists from audio_probe().
-        probe_urls: List of track URLs corresponding to probe_vectors.
-        candidate_url: The candidate artist's profile URL.
         conn: SQLite connection.
-        threshold: Minimum average similarity to pass.
 
     Returns:
-        Tuple of (avg_similarity: float, passed: bool).
+        Normalized centroid as np.ndarray (512,), or None if no tracks.
     """
-    if not probe_vectors:
-        return 0.0, False
-
-    # Load all indexed features from the database
     all_features = trackdb.get_all_features(conn)
     if not all_features:
-        console.print("      [bold yellow]Warning: No indexed tracks in corpus. Cannot gate.[/bold yellow]")
-        return 0.0, False
+        return None
 
-    # Build corpus matrix and compute global centroid
     from deepkt.analyzer import build_search_vector
     corpus_vectors = []
     for track in all_features:
@@ -277,14 +276,43 @@ def similarity_gate(probe_vectors, probe_urls, candidate_url, conn, threshold=0.
             corpus_vectors.append(vec)
 
     if not corpus_vectors:
-        return 0.0, False
+        return None
 
     corpus_matrix = np.array(corpus_vectors, dtype=np.float32)
     centroid = corpus_matrix.mean(axis=0)
     centroid_norm = np.linalg.norm(centroid)
     if centroid_norm == 0:
+        return None
+    return centroid / centroid_norm
+
+
+def similarity_gate(probe_vectors, probe_urls, candidate_url, conn, threshold=0.93, centroid=None):
+    """Compare probe tracks against the library's global centroid.
+
+    Uses a pre-computed centroid if provided, otherwise computes it
+    (slower — use compute_library_centroid() at startup for best perf).
+
+    Args:
+        probe_vectors: List of 512-d float lists from audio_probe().
+        probe_urls: List of track URLs corresponding to probe_vectors.
+        candidate_url: The candidate artist's profile URL.
+        conn: SQLite connection.
+        threshold: Minimum average similarity to pass.
+        centroid: Pre-computed normalized centroid vector (optional).
+
+    Returns:
+        Tuple of (avg_similarity: float, passed: bool).
+    """
+    if not probe_vectors:
         return 0.0, False
-    centroid_normed = centroid / centroid_norm
+
+    # Use pre-computed centroid or compute on the fly
+    centroid_normed = centroid
+    if centroid_normed is None:
+        centroid_normed = compute_library_centroid(conn)
+    if centroid_normed is None:
+        console.print("      [bold yellow]Warning: No indexed tracks in corpus. Cannot gate.[/bold yellow]")
+        return 0.0, False
 
     similarities = []
 
@@ -383,6 +411,15 @@ def run_discovery(target_tracks=5000, threshold=0.95, probe_count=3,
 
     console.print(f"   [dim]Skipping {len(indexed_artist_slugs)} artists already in library.[/dim]")
 
+    # Pre-compute the library centroid ONCE for all gate checks
+    console.print("   [dim]Pre-computing library centroid...[/dim]")
+    library_centroid = compute_library_centroid(conn)
+    if library_centroid is None:
+        console.print("[bold red]No indexed tracks found — cannot run similarity gate.[/bold red]")
+        conn.close()
+        return results
+    console.print(f"   [dim]Centroid ready (512-d vector from {len(trackdb.get_all_features(conn))} tracks).[/dim]")
+
     # Track which artists we've already processed (in-memory + DB)
     processed_artists = {}  # url -> "APPROVED" or "REJECTED"
     for c in trackdb.get_candidates(conn):
@@ -430,8 +467,16 @@ def run_discovery(target_tracks=5000, threshold=0.95, probe_count=3,
             console.print(f"      [dim]Loaded {len(tracks)}/{pl_track_count} tracks[/dim]")
             results["playlists_searched"] += 1
 
+            consecutive_rejections = 0
+            MAX_CONSECUTIVE_REJECTIONS = 10
+
             for track in tracks:
                 if results["tracks_added"] >= target_tracks:
+                    break
+
+                # Early exit: too many consecutive rejections in this playlist
+                if consecutive_rejections >= MAX_CONSECUTIVE_REJECTIONS:
+                    console.print(f"      [yellow]⏩ Skipping rest of playlist ({MAX_CONSECUTIVE_REJECTIONS} consecutive rejections)[/yellow]")
                     break
 
                 track_url = track.get("permalink_url")
@@ -483,11 +528,13 @@ def run_discovery(target_tracks=5000, threshold=0.95, probe_count=3,
                     trackdb.update_candidate_status(conn, artist_url, "REJECTED", avg_similarity=0.0)
                     processed_artists[artist_url] = "REJECTED"
                     results["rejected"] += 1
+                    consecutive_rejections += 1
                     console.print(f"      [dim red]✗ {permalink}[/dim red] — probe failed")
                 else:
                     # Similarity gate
                     avg_sim, passed = similarity_gate(
-                        probe_vectors, probe_urls, artist_url, conn, threshold
+                        probe_vectors, probe_urls, artist_url, conn, threshold,
+                        centroid=library_centroid
                     )
 
                     if passed:
@@ -497,6 +544,7 @@ def run_discovery(target_tracks=5000, threshold=0.95, probe_count=3,
 
                         console.print(f"      [bold green]✓ {permalink}[/bold green] — "
                                       f"{avg_sim:.1%} [green]APPROVED[/green]")
+                        consecutive_rejections = 0  # Reset on approval
 
                         # Scrape full 130 tracks
                         user_data = spider.resolve_user(artist_url)
@@ -520,6 +568,7 @@ def run_discovery(target_tracks=5000, threshold=0.95, probe_count=3,
                         trackdb.update_candidate_status(conn, artist_url, "REJECTED", avg_similarity=avg_sim)
                         processed_artists[artist_url] = "REJECTED"
                         results["rejected"] += 1
+                        consecutive_rejections += 1
                         console.print(f"      [dim red]✗ {permalink}[/dim red] — "
                                       f"{avg_sim:.1%} [red]REJECTED[/red]")
 
