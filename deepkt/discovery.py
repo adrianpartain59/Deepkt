@@ -32,6 +32,7 @@ from deepkt.config import load_pipeline_config
 console = Console()
 
 KEYWORDS_FILE = "hashtags.txt"
+EXCLUDE_KEYWORDS_FILE = "exclude_keywords.txt"
 
 
 # ============================================================
@@ -52,6 +53,19 @@ def load_keywords(keywords_file=KEYWORDS_FILE):
         keywords = [line.strip().lower() for line in f if line.strip() and not line.startswith("#")]
 
     return keywords
+
+
+def load_exclude_keywords(exclude_file=EXCLUDE_KEYWORDS_FILE):
+    """Load exclusion keywords from exclude_keywords.txt.
+
+    Returns:
+        List of lowercase keyword strings to exclude.
+    """
+    if not os.path.exists(exclude_file):
+        return []
+
+    with open(exclude_file, "r") as f:
+        return [line.strip().lower() for line in f if line.strip() and not line.startswith("#")]
 
 
 def score_playlist(playlist, keywords):
@@ -92,6 +106,9 @@ def search_and_rank_playlists(spider, keywords, playlists_per_keyword=20):
     seen_ids = set()
     scored_playlists = []
 
+    exclude_keywords = load_exclude_keywords()
+    skipped = 0
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -109,11 +126,21 @@ def search_and_rank_playlists(spider, keywords, playlists_per_keyword=20):
                 pid = playlist.get("id")
                 if pid and pid not in seen_ids:
                     seen_ids.add(pid)
+
+                    # Check exclusion list
+                    pl_title = (playlist.get("title") or "").lower()
+                    if any(ex in pl_title for ex in exclude_keywords):
+                        skipped += 1
+                        continue
+
                     s = score_playlist(playlist, keywords)
                     if s > 0:
                         scored_playlists.append((playlist, s))
 
             progress.advance(task)
+
+    if skipped:
+        console.print(f"   [dim]Excluded {skipped} playlists by keyword filter.[/dim]")
 
     # Sort by likes_count descending (primary), then keyword score descending (secondary)
     scored_playlists.sort(
@@ -215,12 +242,12 @@ def audio_probe(spider, candidate_url, probe_count=3, temp_dir="data/discovery_t
 # Step 3: Similarity Gate
 # ============================================================
 
-def similarity_gate(probe_vectors, probe_urls, candidate_url, conn, threshold=0.90):
-    """Compare probe tracks against the indexed corpus.
+def similarity_gate(probe_vectors, probe_urls, candidate_url, conn, threshold=0.93):
+    """Compare probe tracks against the library's global centroid.
 
-    For each probe vector, finds the nearest neighbor in the corpus
-    using cosine similarity. Averages the per-probe max similarities.
-    Logs each probe result to the discovery_log table.
+    Computes the average vector of all indexed tracks, then measures
+    cosine similarity of each probe vector against that centroid.
+    Averages the per-probe similarities to decide pass/fail.
 
     Args:
         probe_vectors: List of 512-d float lists from audio_probe().
@@ -241,24 +268,23 @@ def similarity_gate(probe_vectors, probe_urls, candidate_url, conn, threshold=0.
         console.print("      [bold yellow]Warning: No indexed tracks in corpus. Cannot gate.[/bold yellow]")
         return 0.0, False
 
-    # Build corpus matrix (N x 512)
+    # Build corpus matrix and compute global centroid
     from deepkt.analyzer import build_search_vector
     corpus_vectors = []
-    corpus_ids = []
     for track in all_features:
         vec = build_search_vector(track["feature_data"])
         if vec and len(vec) == 512:
             corpus_vectors.append(vec)
-            corpus_ids.append(track["track_id"])
 
     if not corpus_vectors:
         return 0.0, False
 
     corpus_matrix = np.array(corpus_vectors, dtype=np.float32)
-    # Normalize for cosine similarity
-    corpus_norms = np.linalg.norm(corpus_matrix, axis=1, keepdims=True)
-    corpus_norms[corpus_norms == 0] = 1.0
-    corpus_matrix_normed = corpus_matrix / corpus_norms
+    centroid = corpus_matrix.mean(axis=0)
+    centroid_norm = np.linalg.norm(centroid)
+    if centroid_norm == 0:
+        return 0.0, False
+    centroid_normed = centroid / centroid_norm
 
     similarities = []
 
@@ -269,15 +295,12 @@ def similarity_gate(probe_vectors, probe_urls, candidate_url, conn, threshold=0.
             continue
         probe_normed = probe_arr / probe_norm
 
-        # Cosine similarity against all corpus tracks
-        cos_sims = corpus_matrix_normed @ probe_normed
-        max_idx = int(np.argmax(cos_sims))
-        max_sim = float(cos_sims[max_idx])
+        # Cosine similarity against global library centroid
+        sim = float(probe_normed @ centroid_normed)
+        similarities.append(sim)
 
-        similarities.append(max_sim)
-
-        # Log this probe result
-        trackdb.log_probe(conn, candidate_url, probe_url, max_sim, corpus_ids[max_idx])
+        # Log this probe result (no specific corpus match, log with None)
+        trackdb.log_probe(conn, candidate_url, probe_url, sim, None)
 
     if not similarities:
         return 0.0, False
@@ -347,6 +370,18 @@ def run_discovery(target_tracks=5000, threshold=0.95, probe_count=3,
 
     # Collect existing seeds to skip
     seed_urls = set(spider.get_seed_artists())
+
+    # Build set of artist slugs already in the database
+    all_metadata = trackdb.get_all_metadata(conn)
+    indexed_artist_slugs = set()
+    for t in all_metadata:
+        url = t.get("url", "")
+        # Extract artist slug from soundcloud.com/<artist>/<track>
+        parts = url.replace("https://soundcloud.com/", "").split("/")
+        if parts:
+            indexed_artist_slugs.add(parts[0].lower())
+
+    console.print(f"   [dim]Skipping {len(indexed_artist_slugs)} artists already in library.[/dim]")
 
     # Track which artists we've already processed (in-memory + DB)
     processed_artists = {}  # url -> "APPROVED" or "REJECTED"
@@ -420,6 +455,11 @@ def run_discovery(target_tracks=5000, threshold=0.95, probe_count=3,
                 # Skip seed artists
                 if artist_url in seed_urls:
                     console.print(f"      [dim]⏭ {permalink}[/dim] — seed artist, skipping")
+                    continue
+
+                # Skip artists already in the library
+                if permalink.lower() in indexed_artist_slugs:
+                    console.print(f"      [dim green]⏭ {permalink}[/dim green] — already in library, skipping")
                     continue
 
                 # Check if already processed

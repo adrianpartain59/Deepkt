@@ -1,0 +1,4 @@
+# Playlists with these words in the title will be skipped.
+# One keyword per line, case-insensitive.
+deep house
+bass house

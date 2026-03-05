@@ -21,7 +21,7 @@ progress:
   log_file: data/pipeline.log
 
 discovery:
-  similarity_threshold: 0.95   # Min avg cosine similarity to pass gate
+  similarity_threshold: 0.93   # Min avg cosine similarity to pass gate
   probe_count: 3               # Tracks to analyze per candidate artist
   target_tracks: 5000          # Stop after this many tracks added to crawled_links.txt
   rate_limit_pause: 1.0        # Pause between API calls
