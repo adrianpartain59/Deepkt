@@ -656,6 +656,14 @@ def cmd_prune(args):
             console.print("[dim]Prune cancelled.[/dim]")
 
     conn.close()
+def cmd_map(args):
+    """Generate 2D UMAP projection of the music universe."""
+    from deepkt.umap_projector import generate_umap_map
+    generate_umap_map(
+        n_neighbors=args.neighbors,
+        min_dist=args.min_dist,
+        metric=args.metric
+    )
 
 
 def main():
@@ -698,6 +706,13 @@ def main():
     # --- features ---
     feat = subparsers.add_parser("features", help="Show all features and their status")
     feat.set_defaults(func=cmd_features)
+
+    # --- map ---
+    mp = subparsers.add_parser("map", help="Generate 2D UMAP projection of the music universe")
+    mp.add_argument("--neighbors", type=int, default=15, help="UMAP n_neighbors (default: 15)")
+    mp.add_argument("--min-dist", type=float, default=0.1, help="UMAP min_dist (default: 0.1)")
+    mp.add_argument("--metric", type=str, default="cosine", help="UMAP metric (default: cosine)")
+    mp.set_defaults(func=cmd_map)
 
     # --- inspect ---
     insp = subparsers.add_parser("inspect", help="Show all stored features for a track")
