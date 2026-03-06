@@ -1,0 +1,460 @@
+Proposed Sub-Selection of Seed Tracks (Top 10 closest to center per artist)
+========================================================================
+
+--- 97kickstvr (60 total tracks in DB) ---
+  96.0% | 97Kickstvr - NAV - STAY UP (97Kickstvr Remix)
+  95.8% | 97Kickstvr - Travis Scott - TELEKINESIS (97Kickstvr Remix)
+  94.8% | 97Kickstvr - ATB - Ecstasy (97Kickstvr Remix)
+  94.6% | 97Kickstvr - 97Kickstvr x Ipnosis - LOST
+  94.5% | 97Kickstvr - 97Kickstvr - Throwback
+  94.4% | 97Kickstvr - 97Kickstvr x Izabela Starko - Last Haven
+  94.4% | 97Kickstvr - 97Kickstvr x Øtherside. - to the skies
+  94.4% | 97Kickstvr - 97Kickstvr - Beautiful Day (feat. Izabela Starko)
+  94.3% | 97Kickstvr - Gareth Emery & Christina Novelli - Concrete Angel (97Kickstvr Remix)
+  94.1% | 97Kickstvr - 97Kickstvr - Silence
+
+--- wdhv8oahw6wt (85 total tracks in DB) ---
+  96.8% | ANTXRES - FATE (NOW ON SPOTIFY)
+  96.4% | ANTXRES - MIDNIGHT w/ RYDER SPOT
+  96.2% | ANTXRES - Rewind
+  96.2% | ANTXRES - Aura (feat. BONQ)
+  96.0% | ANTXRES - TIN'KA (NOW ON SPOTIFY)
+  95.7% | ANTXRES - PULSAR
+  95.7% | ANTXRES - Never True
+  95.7% | ANTXRES - NEW HORIZONS (NOW ON SPOTIFY)
+  95.6% | ANTXRES - HYDRA (NOW ON SPOTIFY)
+  95.4% | ANTXRES - KARMA (NOW ON SPOTIFY)
+
+--- user-22575920 (67 total tracks in DB) ---
+  96.6% | BLESSED MANE - The Other Side Of The Moon
+  96.2% | BLESSED MANE - Feel
+  96.2% | BLESSED MANE - Distance
+  95.6% | BLESSED MANE - Misty Wasteland
+  94.9% | BLESSED MANE - Alone In The Rain
+  94.6% | BLESSED MANE - Night Fog
+  94.6% | BLESSED MANE - Singularity
+  94.3% | BLESSED MANE - CRUSHER
+  94.0% | BLESSED MANE - Wimm
+  93.9% | BLESSED MANE - Road Dust
+
+--- casper-tkeshelashvili (34 total tracks in DB) ---
+  97.4% | CASPER - ONMYMIND
+  96.2% | CASPER - Transced w/ CRYSTXLMXNE
+  96.1% | CASPER - SPACING
+  96.1% | CASPER - DESPAIR
+  95.4% | CASPER - ENEMIES
+  95.2% | CASPER - Death Or Love w/ DIRTYJUDGE
+  95.1% | CASPER - PRESSURE
+  95.0% | CASPER - ALTERED
+  94.9% | CASPER - ESSENCE
+  94.9% | CASPER - LEGACY
+
+--- cyrexino (90 total tracks in DB) ---
+  97.0% | CYREX - SINNER (w/ FAON)
+  96.5% | CYREX - AFTERLIFE 2
+  95.5% | CYREX - CYREX x JDSLVT - QUANTUM
+  94.2% | CYREX - CYREX x FAON - ALL THE WAY
+  93.7% | CYREX - UNDERWORLD (VIP Mix)
+  93.6% | CYREX - FAON x CYREX - LAST CHANCE
+  93.6% | CYREX - REBORN
+  93.4% | CYREX - NORTH MEMPHIS HOUSE
+  93.1% | CYREX - SWAGGIN'
+  92.9% | CYREX - CYREX x FAON - STORM
+
+--- dvrstmusic (130 total tracks in DB) ---
+  96.4% | DVRST - 6 AM DVRST DONT SLEEP
+  95.9% | DVRST - DVRST, monrxe - Darling
+  94.8% | DVRST - DVRST - REASON TO LIVE VIP
+  94.6% | DVRST - PURPLE THANG
+  94.3% | DVRST - Thinkin Of A Drive By
+  93.6% | DVRST - ♂Boy Next Door♂
+  93.5% | DVRST - DVRST, Jarren Benton - Gimmie The Loot (Remix)
+  93.5% | DVRST - Daughter - All I Wanted (Rmx)
+  93.5% | DVRST - DVRST, Leah Julia - Across The Sky (Original Mix)
+  93.4% | DVRST - DVRST, OBLXKQ - ENDLESS LOVE
+
+--- user-526434 (61 total tracks in DB) ---
+  97.4% | EhzumKa - 18. Ramirez - Stand Alone (Skeler Remix)
+  95.7% | EhzumKa - 31. Devilish Trio - Laid To Waste (Skeler Mix)
+  95.7% | EhzumKa - 7. Oliver Tree - Jerk (Skeler Remix)
+  95.4% | EhzumKa - 26. Skrillex, Fred Again.., Four Tet - Baby Again (Skeler Remix)
+  95.3% | EhzumKa - 23. Purity Ring - Lofticries (Skeler Remix)
+  95.2% | EhzumKa - 17. Devilish Trio - In My System (Skeler Remix)
+  94.9% | EhzumKa - 2. Dido Thank You (Skeler Remix)
+  94.8% | EhzumKa - 4. Metro Boomin, Future - Too Many Nights (Skeler Remix)
+  94.7% | EhzumKa - 12. Three 6 Mafia Back Against Da Wall (Skeler Remix)
+  94.6% | EhzumKa - 1. Devilish Trio - As Light Fades (Skeler Remix)
+
+--- gravechill (32 total tracks in DB) ---
+  96.5% | GRAVECHILL - DESOLATION
+  96.2% | GRAVECHILL - RUIN
+  95.9% | GRAVECHILL - SNOW
+  95.9% | GRAVECHILL - GOD IS DEAD
+  95.6% | GRAVECHILL - HEARTBREAK
+  95.3% | GRAVECHILL - MEMORIES
+  94.8% | GRAVECHILL - HATE
+  94.8% | GRAVECHILL - VACUUM feat. attashe
+  94.7% | GRAVECHILL - VICE
+  94.5% | GRAVECHILL - SPLIT
+
+--- hxrizxn (78 total tracks in DB) ---
+  96.7% | HXRIZXN - DREAM ABOUT YOU [NOW ON SPOTIFY]
+  96.6% | HXRIZXN - COLD
+  96.5% | HXRIZXN - AFTER RAIN
+  96.3% | HXRIZXN - SHADES
+  95.7% | HXRIZXN - RAY OF YOUTH
+  95.2% | HXRIZXN - BLOOD STAINS
+  95.0% | HXRIZXN - Insanity
+  95.0% | HXRIZXN - RENOWN (feat. FLONEX)
+  94.8% | HXRIZXN - ROOFTOPS
+  94.7% | HXRIZXN - MIST OF SILENCE
+
+--- hxvrmxn (106 total tracks in DB) ---
+  96.7% | HXVRMXN - SOUTH II
+  96.7% | HXVRMXN - OUT OF NOTHING
+  96.4% | HXVRMXN - 19 UNDAGROUND
+  95.8% | HXVRMXN - CROSSFADE
+  95.8% | HXVRMXN - XFF-DREAM
+  95.7% | HXVRMXN - HIGH ABOVE ft. KrisBN
+  95.0% | HXVRMXN - LTE
+  95.0% | HXVRMXN - FEAR NO EVIL
+  95.0% | HXVRMXN - HEADLIGHTS FLASHES
+  94.8% | HXVRMXN - RUNWAY
+
+--- hugeloud (55 total tracks in DB) ---
+  96.2% | Hugeloud - Night Situation
+  95.8% | Hugeloud - Desolent
+  94.7% | Hugeloud - Faith
+  94.1% | Hugeloud - Destiny
+  94.1% | Hugeloud - Things You Say
+  92.8% | Hugeloud - Hugeloud, Affectwave - Spiral
+  92.5% | Hugeloud - Hugeloud, CNQR+ - Dissolve
+  91.5% | Hugeloud - Innocence (w/ DVRKLXGHT)
+  90.5% | Hugeloud - Hugeloud, FRVCTVLIKV  - Tranquility
+  90.5% | Hugeloud - Hugeloud - Imagine
+
+--- kedela001 (50 total tracks in DB) ---
+  96.9% | KEDELA - KEDELA - MINDSET
+  96.6% | KEDELA - KEDELA - LOST IN DARK
+  96.5% | KEDELA - KEDELA - FUTURISTIC
+  96.2% | KEDELA - KEDELA - FAILURE
+  96.1% | KEDELA - KEDELA - NARA
+  96.0% | KEDELA - KEDELA x KILLER MANTIS - SPACE WALK
+  95.9% | KEDELA - OCCUPATION
+  95.7% | KEDELA - KEDELA - EUPHORIA
+  95.6% | KEDELA - KEDELA - WITHOUT LIMITS
+  95.6% | KEDELA - KEDELA - KYOTO
+
+--- kxnvra (100 total tracks in DB) ---
+  95.7% | KXNVRA - KXNVRA x Judgement G - PARADOX
+  95.6% | KXNVRA - KXNVRA x DePaul - GALAXY
+  95.2% | KXNVRA - HEAVEN
+  94.6% | KXNVRA - KXNVRA x $ B - INFERNAL
+  93.6% | KXNVRA - HOSPICEMANE x KXNVRA - AURORA
+  93.5% | KXNVRA - BLOODYARD II
+  93.4% | KXNVRA - SLXEPING TOKYO x KXNVRA - Kyoto
+  93.3% | KXNVRA - KXNVRA x ELIJAH GHOST - TAKING OFF
+  93.3% | KXNVRA - BURNOUT
+  92.7% | KXNVRA - NIGHTMARE
+
+--- prodbylostmane (77 total tracks in DB) ---
+  96.8% | LOSTMANE - OXYGEN
+  96.4% | LOSTMANE - nightrunner
+  95.9% | LOSTMANE - luminar
+  95.8% | LOSTMANE - FOLLOW
+  95.4% | LOSTMANE - DISTRACT
+  95.3% | LOSTMANE - VORTEX [WARDUB S5 - response to OLDFLOP]
+  95.2% | LOSTMANE - NEVER LETTING GO w/ CRYSTXLMXNE
+  95.1% | LOSTMANE - HOLD ME
+  95.1% | LOSTMANE - Ecstasy
+  94.9% | LOSTMANE - crashingdown
+
+--- latebloomer777 (64 total tracks in DB) ---
+  97.1% | LVTE BLOOMER - BUTTERFLIES
+  96.6% | LVTE BLOOMER - Beyond
+  96.6% | LVTE BLOOMER - SADNESS AND SORROW
+  96.5% | LVTE BLOOMER - LOOK AT ME NOW
+  96.0% | LVTE BLOOMER - DISILLUSION
+  95.8% | LVTE BLOOMER - MIRAGE
+  95.7% | LVTE BLOOMER - i'm rolling
+  95.6% | LVTE BLOOMER - Pretending
+  95.5% | LVTE BLOOMER - it hurts like hell
+  95.0% | LVTE BLOOMER - DIVINE
+
+--- lxst_cxntury (121 total tracks in DB) ---
+  97.3% | LXST CXNTURY - ARCADIA MIX
+  97.2% | LXST CXNTURY - KYOTO
+  97.0% | LXST CXNTURY - BLUR
+  96.9% | LXST CXNTURY - VEGA
+  96.4% | LXST CXNTURY - CAPTIVE
+  96.3% | LXST CXNTURY - CYBERSITY
+  96.1% | LXST CXNTURY - UTOPIA
+  96.0% | LXST CXNTURY - ODIUM
+  95.9% | LXST CXNTURY - INFINITY
+  95.8% | LXST CXNTURY - HAVOC
+
+--- lazzysloth (30 total tracks in DB) ---
+  97.0% | LXZY SLXTH - Good Times
+  96.7% | LXZY SLXTH - Countdown
+  96.5% | LXZY SLXTH - My Wave
+  95.9% | LXZY SLXTH - Last Fight
+  95.7% | LXZY SLXTH - Aftermath
+  95.6% | LXZY SLXTH - Lxzy Slxth  - Emotions
+  95.6% | LXZY SLXTH - Last Hope
+  95.3% | LXZY SLXTH - White Silvia
+  95.2% | LXZY SLXTH - Bad Influence
+  95.1% | LXZY SLXTH - Suffering
+
+--- lortaouttakes (11 total tracks in DB) ---
+  97.0% | Lorta Outtakes - Travis Scott feat. Playboi Carti - FE!N (Lorta Remix)
+  96.3% | Lorta Outtakes - The Cure - Just Like Heaven (Lorta Remix)
+  96.1% | Lorta Outtakes - Belis - Only Facts (Lorta Remix)
+  95.6% | Lorta Outtakes - Derek Pope - Water World (Lorta Remix)
+  94.6% | Lorta Outtakes - Erika Lundmoen - REPLICANT (Lorta Remix)
+  93.8% | Lorta Outtakes - Diet Cig - Apricots (Lorta Remix)
+  92.3% | Lorta Outtakes - Elsa & Emilie - Run (Lorta Remix)
+  89.4% | Lorta Outtakes - Purity Ring - obedear (Lorta Remix)
+  88.1% | Lorta Outtakes - girl in red - we fell in love in october (Lorta Remix)
+  84.8% | Lorta Outtakes - Lorta - Amayori no Shinen あまよりの思念
+
+--- mirajsounds (38 total tracks in DB) ---
+  95.7% | MIRAJ - Lithe - Rolling Stone (Miraj Remix)
+  95.1% | MIRAJ - Augxst - Forbes (Miraj Remix)
+  95.1% | MIRAJ - Pressure
+  95.0% | MIRAJ - Central Cee & Raye - MOI (Lostmane X Miraj Remix)
+  95.0% | MIRAJ - Internet Money, Don Toliver, Gunna & Nav - Lemonade (Miraj Remix)
+  94.8% | MIRAJ - psydfx x Lierda - Fire (Miraj Remix)
+  94.5% | MIRAJ - Rauw Alejandro & Chencho Corleone - Desesperados (Miraj Remix)
+  94.4% | MIRAJ - Future, Metro Boomin, Travis Scott & Playboi Carti - Type Shit (Miraj Remix)
+  94.3% | MIRAJ - Passage
+  94.2% | MIRAJ - Until I'm Done (Isaiah The Wulf - Lost in Chaos Remix)
+
+--- mrjay96 (116 total tracks in DB) ---
+  97.0% | MRJay - Come Back
+  96.3% | MRJay - Амура - Я хочу любить (MRJay Remix)
+  96.2% | MRJay - Until Dawn
+  96.0% | MRJay - Alive
+  96.0% | MRJay - Come Back ft. olivr
+  95.9% | MRJay - Katy Perry - Harleys In Hawaii (MRJay Remix)
+  95.6% | MRJay - vinter x MRJay - Lost In Despair
+  95.5% | MRJay - Night Rider
+  95.4% | MRJay - Deathwish
+  95.4% | MRJay - Offers
+
+--- neronus (63 total tracks in DB) ---
+  96.4% | NERONUS - VHS FUTURE
+  96.1% | NERONUS - PLEASURE
+  96.0% | NERONUS - JUVENILITY
+  96.0% | NERONUS - MONSTRO
+  95.9% | NERONUS - CORE
+  95.4% | NERONUS - GEOMETRIC PROGRESSION
+  95.3% | NERONUS - STAR WAR
+  95.0% | NERONUS - NEMESIS
+  94.7% | NERONUS - RADIATION
+  94.6% | NERONUS - FALL
+
+--- nevorahmusic (32 total tracks in DB) ---
+  97.2% | NEVORAH - Floating
+  96.3% | NEVORAH - Perpetrate
+  96.2% | NEVORAH - Obscura
+  95.6% | NEVORAH - Burka Mixtape #1
+  95.3% | NEVORAH - Getting Buck
+  94.9% | NEVORAH - Blaze Up
+  94.7% | NEVORAH - Prada
+  94.6% | NEVORAH - Budak
+  94.3% | NEVORAH - Cholera
+  94.2% | NEVORAH - Perro De Pelea
+
+--- phantaszz (56 total tracks in DB) ---
+  97.0% | PHANTASZZ - BONES - CTRLALTDELETE (REMIX)
+  97.0% | PHANTASZZ - DESIRE OF MY SOUL w/ HXRIZXN (OUT NOW ON ALL PLATFORMS)
+  96.7% | PHANTASZZ - INTENSIVE ( ig: @phantasiaszz )
+  96.7% | PHANTASZZ - END
+  96.4% | PHANTASZZ - MEMORIES
+  96.3% | PHANTASZZ - PARADISE (ig: @phantasiaszz)
+  96.2% | PHANTASZZ - WINTER VIBE (ig:@phantasiaszz)
+  96.1% | PHANTASZZ - DESPERATION
+  96.1% | PHANTASZZ - CLARITY (ig:@phantasiaszz)
+  96.0% | PHANTASZZ - STARRY SKY w/ PHONKMESSIAH, HXRIZXN
+
+--- ryderspot (50 total tracks in DB) ---
+  97.4% | RYDER SPOT - Distance
+  96.4% | RYDER SPOT - PURSUIT
+  96.3% | RYDER SPOT - Final Straight
+  96.2% | RYDER SPOT - Levitation (Unofficial) [Cut Version]
+  96.2% | RYDER SPOT - Blastars Soul
+  95.9% | RYDER SPOT - NIGHT CITY
+  95.9% | RYDER SPOT - Memoriae
+  95.5% | RYDER SPOT - Need To Love (Reflekt x Devilish Trio)
+  95.4% | RYDER SPOT - ESTHETIC
+  95.4% | RYDER SPOT - Travis Scott - HIGHEST IN THE ROOM (RYDER SPOT EDIT)
+
+--- revbeatz (80 total tracks in DB) ---
+  96.1% | Re_V - dead n' gone w/ MRJay
+  96.0% | Re_V - FRAUD DISTRICT (FULL STREAM)
+  95.9% | Re_V - mirage
+  95.3% | Re_V - lost in your eyes
+  95.0% | Re_V - hinari
+  95.0% | Re_V - MIRRORED SENSES w/ ZappBeats
+  94.9% | Re_V - IN MY SYSTEM w/ VINTER & SwuM
+  94.9% | Re_V - WANTED LINES
+  94.5% | Re_V - meikai
+  94.2% | Re_V - SUSTAIN w/ almogfx
+
+--- xxxsagexxx (67 total tracks in DB) ---
+  96.8% | SAGE - Tension w/ AntXres
+  96.5% | SAGE - THE GALLOWS WAIT
+  96.2% | SAGE - Bones - CtrlAltDelete (Sage Remix)
+  95.8% | SAGE - Fall Apart w/ Re_V
+  95.4% | SAGE - OCEANS [CZELUSC #10]
+  95.4% | SAGE - Razor
+  95.4% | SAGE - skeler. x SAGE - Lifestyle
+  95.1% | SAGE - The Finer Things
+  95.0% | SAGE - Tell Me When Im Good Enough
+  94.8% | SAGE - DARCI - These Nights (reup)
+
+--- static-angel (28 total tracks in DB) ---
+  96.2% | STATIC ANGEL - Dreams
+  96.1% | STATIC ANGEL - Holoblade
+  95.9% | STATIC ANGEL - Lotus
+  95.2% | STATIC ANGEL - Fragments
+  94.6% | STATIC ANGEL - Devotion
+  94.0% | STATIC ANGEL - crave
+  93.1% | STATIC ANGEL - самота
+  93.0% | STATIC ANGEL - Tell You
+  93.0% | STATIC ANGEL - Lost Allure
+  92.0% | STATIC ANGEL - Fantasy w/ Lvst
+
+--- sxturn_galaxy (76 total tracks in DB) ---
+  96.3% | SXTURN GALAXY - HEIMDALL
+  95.5% | SXTURN GALAXY - Evelyn
+  95.4% | SXTURN GALAXY - ARCTUR
+  95.3% | SXTURN GALAXY - ANXIETY
+  95.3% | SXTURN GALAXY - EXODUS ft. iGRES
+  95.0% | SXTURN GALAXY - Realignment
+  94.9% | SXTURN GALAXY - Emptiness
+  94.9% | SXTURN GALAXY - HUSTLA (REWORKED)
+  94.7% | SXTURN GALAXY - ionosphere
+  94.6% | SXTURN GALAXY - DUENDE (feat. iGRES)
+
+--- trzbts (39 total tracks in DB) ---
+  95.6% | TEARZ - BREAKING THE HABIT
+  95.3% | TEARZ - RAZORBLADE
+  94.1% | TEARZ - Jo Per Ty
+  93.9% | TEARZ - H.E.R.
+  93.6% | TEARZ - ALONE
+  93.6% | TEARZ - GET TO YOU
+  93.4% | TEARZ - SUN GOES DOWN
+  93.4% | TEARZ - I'M SAD I KNOW
+  93.3% | TEARZ - IN THE END
+  93.2% | TEARZ - OVERDOSE - feat. BlazinG
+
+--- tope2die (43 total tracks in DB) ---
+  95.8% | TOPE2DIE - somewhere
+  94.4% | TOPE2DIE - LIN
+  94.3% | TOPE2DIE - Still fucked up (very old style 2018)
+  94.1% | TOPE2DIE - halcyon
+  93.5% | TOPE2DIE - Drop It Off
+  93.4% | TOPE2DIE - SPVRROW X TOPE2DIE - FREEDOM
+  93.4% | TOPE2DIE - TOPE2DIE, SPVRROW, TWOPAIN - Thunder
+  92.7% | TOPE2DIE - TRIPZZZ X TOPE2DIE - IN MY MIND
+  92.6% | TOPE2DIE - WAIT
+  92.3% | TOPE2DIE - LVCXD DRXVMXR x TOPE2DIE - GIVE ME SOME
+
+--- imtheobsidian (34 total tracks in DB) ---
+  96.4% | The Øbsidian - Glow
+  95.8% | The Øbsidian - Lakes
+  95.5% | The Øbsidian - Numb
+  95.1% | The Øbsidian - Northern Lights
+  94.3% | The Øbsidian - Believe
+  94.3% | The Øbsidian - sentient
+  94.2% | The Øbsidian - WHAT I LUV (w/ Devilish Trio)
+  94.1% | The Øbsidian - Like a Flame
+  94.0% | The Øbsidian - ARCADIA ONLINE 2021
+  93.8% | The Øbsidian - whispering angel
+
+--- vipn (130 total tracks in DB) ---
+  96.8% | V.I.P.N - ALL FOR YOU
+  96.7% | V.I.P.N - I AM TIRED
+  96.5% | V.I.P.N - CAN'T ESCAPE
+  96.3% | V.I.P.N - EQUALIZE
+  96.0% | V.I.P.N - WRATH
+  95.9% | V.I.P.N - EMPTY INSIDE
+  95.9% | V.I.P.N - I WAS LOST
+  95.8% | V.I.P.N - I WANT YOU
+  95.4% | V.I.P.N - V.I.P.N - REFLECTION
+  95.2% | V.I.P.N - ECHOES
+
+--- vertygomusic (17 total tracks in DB) ---
+  96.1% | VERTYGO - VERTYGO - Wiser
+  94.9% | VERTYGO - Darci - Throwback (VERTYGO Remix)
+  94.9% | VERTYGO - VERTYGO - SCOPE
+  94.6% | VERTYGO - DISAPPEAR
+  94.5% | VERTYGO - Darci - High Grade (VERTYGO REMIX)
+  94.2% | VERTYGO - MINTED
+  94.0% | VERTYGO - Lithe - Fall Back (VERTYGO Remix)
+  93.6% | VERTYGO - CONTROL
+  93.6% | VERTYGO - VERTYGO - REMEMBER
+  93.4% | VERTYGO - Odeal - Blame U (Remix)
+
+--- barnacleboimusic (130 total tracks in DB) ---
+  96.2% | barnacle boi - вlιnĸ-182  - ι мιѕѕ υ (вarnacle вoι qυιcĸғlιp)
+  96.2% | barnacle boi - flux
+  95.8% | barnacle boi - ☼ she ☼ [old throwaway track]
+  95.1% | barnacle boi - Overcome.
+  94.9% | barnacle boi - where am i
+  94.6% | barnacle boi - come and go.
+  94.6% | barnacle boi - don't dwell.
+  94.6% | barnacle boi - her.
+  94.1% | barnacle boi - contact
+  93.8% | barnacle boi - lincoln st.
+
+--- iwilldiehere (30 total tracks in DB) ---
+  95.3% | iwilldiehere - umbrella
+  95.0% | iwilldiehere - carelessness
+  94.3% | iwilldiehere - iwilldiеhere, DVRKLXGHT - Wings
+  93.9% | iwilldiehere - wind w/ airshade
+  93.9% | iwilldiehere - iwilldiеhere x kim -  nothing else left
+  93.7% | iwilldiehere - LUV & PAIN
+  93.1% | iwilldiehere - iwilldiеhere, DVRKLXGHT - ANTARCTICA
+  92.7% | iwilldiehere - iwilldiеhere x akiaura - anbu
+  91.5% | iwilldiehere - iwilldiеhere x zeitfall - cursed
+  91.3% | iwilldiehere - iwilldiеhere, DVRKLXGHT - Can't sleep
+
+--- llllane (54 total tracks in DB) ---
+  96.4% | my!lane - erase me
+  95.6% | my!lane - winter feelings
+  95.3% | my!lane - Alpha
+  95.0% | my!lane - Get off me !
+  94.8% | my!lane - hiding
+  94.0% | my!lane - Stereo Love
+  93.8% | my!lane - heart
+  93.8% | my!lane - Through Soul
+  93.7% | my!lane - White Crown
+  93.7% | my!lane - Overload
+
+--- skelermusic (55 total tracks in DB) ---
+  97.0% | skeler. - CONTRACTS
+  96.8% | skeler. - DEVILISH TRIO - NOSE TO THE GRINDSTONE (Skeler Remix)
+  96.1% | skeler. - Test My Love
+  95.5% | skeler. - N i g h t D r i v e スケラー (Phonk/Wave)
+  95.1% | skeler. - ＰＡＬＥ ＬＩＧＨＴ
+  95.0% | skeler. - DaniLeigh - No Limits (Skeler Remix)
+  93.9% | skeler. - Mt Eden - Still Alive (Skeler Remix)
+  93.9% | skeler. - skeler - thank you
+  93.8% | skeler. - Everything is Right (ft Devilish Trio)
+  93.7% | skeler. - ＯＮＥ ＤＡＹ
+
+--- vinterfx (88 total tracks in DB) ---
+  97.1% | vinter - smoke serpent
+  96.3% | vinter - smoke serpent (slowed)
+  95.8% | vinter - what it feels like
+  95.7% | vinter - Sepia III
+  95.3% | vinter - GRAVITY CLAWS (w/re_v)
+  95.3% | vinter - dream of you
+  95.0% | vinter - yasumi w/almogfx
+  94.5% | vinter - silent highways
+  94.5% | vinter - one last thing
+  94.5% | vinter - lost in time
+
+Total tracks proposed for refined centroid: 380

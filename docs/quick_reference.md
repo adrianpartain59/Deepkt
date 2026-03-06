@@ -20,6 +20,12 @@
 .venv/bin/python3.12 cli.py ingest                           # Move URLs to links.txt for pipeline
 ```
 
+### Prune (Database Cleanup)
+```bash
+.venv/bin/python3.12 cli.py prune --threshold 0.85 --dry-run --all # Show ALL tracks below 85% seed match (no delete)
+.venv/bin/python3.12 cli.py prune --threshold 0.85                 # Permanently delete tracks below 85% match
+```
+
 ### Audio-Gated Discovery
 ```bash
 .venv/bin/python3.12 cli.py discover                         # Find new artists via seed likes + audio similarity

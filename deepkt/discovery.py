@@ -282,11 +282,80 @@ def compute_library_centroid(conn):
     centroid = corpus_matrix.mean(axis=0)
     centroid_norm = np.linalg.norm(centroid)
     if centroid_norm == 0:
-        return None
-    return centroid / centroid_norm
+        return None, 0
+    return centroid / centroid_norm, len(corpus_vectors)
 
 
-def similarity_gate(probe_vectors, probe_urls, candidate_url, conn, threshold=0.93, centroid=None):
+def compute_seed_centroid(conn, seed_urls):
+    """Pre-compute the normalized centroid of tracks from seed artists only,
+    or load the user-refined solid centroid if it exists.
+
+    Args:
+        conn: SQLite connection.
+        seed_urls: Set or list of seed artist profile URLs.
+
+    Returns:
+        Tuple of (Normalized centroid as np.ndarray (512,), track_count: int),
+        or (None, 0) if no seed tracks found in the database.
+    """
+    import os
+    import numpy as np
+    
+    refined_path = 'data/refined_seed_centroid.npy'
+    if os.path.exists(refined_path):
+        centroid = np.load(refined_path)
+        # Note: We hardcode 380 here as the curated count for logging purposes,
+        # but the real magic is the refined vector itself.
+        return centroid, 380
+
+    if not seed_urls:
+        return None, 0
+
+    # Extract clean slugs from seed URLs for matching
+    seed_slugs = set()
+    for url in seed_urls:
+        slug = url.replace('https://soundcloud.com/', '').strip('/').lower()
+        seed_slugs.add(slug)
+
+    all_features = trackdb.get_all_features(conn)
+    if not all_features:
+        return None, 0
+
+    all_metadata = trackdb.get_all_metadata(conn)
+    # create a lookup mapping track_id -> artist_slug
+    artist_slug_by_id = {}
+    for meta in all_metadata:
+        url = meta.get("url", "")
+        parts = url.replace("https://soundcloud.com/", "").split("/")
+        if parts:
+            artist_slug_by_id[meta["track_id"]] = parts[0].lower()
+
+    from deepkt.analyzer import build_search_vector
+    corpus_vectors = []
+    
+    for track in all_features:
+        track_id = track["track_id"]
+        slug = artist_slug_by_id.get(track_id)
+        
+        if slug in seed_slugs:
+            vec = build_search_vector(track["feature_data"])
+            if vec and len(vec) == 512:
+                corpus_vectors.append(vec)
+
+    if not corpus_vectors:
+        return None, 0
+
+    corpus_matrix = np.array(corpus_vectors, dtype=np.float32)
+    centroid = corpus_matrix.mean(axis=0)
+    centroid_norm = np.linalg.norm(centroid)
+    
+    if centroid_norm == 0:
+        return None, 0
+        
+    return centroid / centroid_norm, len(corpus_vectors)
+
+
+def similarity_gate(probe_vectors, probe_urls, candidate_url, conn, threshold=0.85, centroid=None):
     """Compare probe tracks against the library's global centroid.
 
     Uses a pre-computed centroid if provided, otherwise computes it
@@ -411,14 +480,23 @@ def run_discovery(target_tracks=5000, threshold=0.95, probe_count=3,
 
     console.print(f"   [dim]Skipping {len(indexed_artist_slugs)} artists already in library.[/dim]")
 
-    # Pre-compute the library centroid ONCE for all gate checks
-    console.print("   [dim]Pre-computing library centroid...[/dim]")
-    library_centroid = compute_library_centroid(conn)
+    # Pre-compute reference centroid: prefer seed artists, fallback to full library
+    console.print("   [dim]Pre-computing reference centroid...[/dim]")
+
+    # Try seed centroid first
+    library_centroid, centroid_count = compute_seed_centroid(conn, seed_urls)
+    centroid_source = "seed artists"
+
+    if library_centroid is None:
+        # Fallback to full library centroid
+        library_centroid, centroid_count = compute_library_centroid(conn)
+        centroid_source = "full library"
+
     if library_centroid is None:
         console.print("[bold red]No indexed tracks found — cannot run similarity gate.[/bold red]")
         conn.close()
         return results
-    console.print(f"   [dim]Centroid ready (512-d vector from {len(trackdb.get_all_features(conn))} tracks).[/dim]")
+    console.print(f"   [dim]Centroid ready ({centroid_source}, {centroid_count} tracks).[/dim]")
 
     # Track which artists we've already processed (in-memory + DB)
     processed_artists = {}  # url -> "APPROVED" or "REJECTED"

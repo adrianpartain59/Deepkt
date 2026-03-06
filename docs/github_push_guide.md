@@ -60,6 +60,20 @@ git push dev main:personal-dev
 > [!IMPORTANT]
 > The command `git push dev main:personal-dev` pushes the local `main` branch directly to the `dev` remote's `personal-dev` branch **without ever switching branches locally**. This protects `data/tracks.db` from being deleted.
 
+### Push `links.txt` to Dev (ALWAYS do this after every push)
+
+`links.txt` contains all crawled and discovered track URLs. It is **excluded from origin** (public) but must **always be pushed to dev** (private) so it is backed up.
+
+```bash
+# After the main push, always do:
+git add links.txt
+git commit -m "chore: update links.txt"
+git push dev main:personal-dev
+```
+
+> [!CAUTION]
+> Do **NOT** push `links.txt` to `origin`. Do **NOT** skip this step — `links.txt` is the single source of all discovered track URLs and cannot be rebuilt.
+
 ### Push Personal Data (Dev Repo Only)
 If you have generated valuable personal data (e.g., Training Lab triplets in `data/tracks.db`) or have large files that would take a long time to retrieve/rebuild, you should back them up **exclusively** to the private dev repository.
 

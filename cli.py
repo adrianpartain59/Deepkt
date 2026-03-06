@@ -531,6 +531,118 @@ def cmd_discover_log(args):
     conn.close()
 
 
+def cmd_prune(args):
+    import numpy as np
+    from rich.console import Console
+    from deepkt import db as trackdb
+    from deepkt.indexer import build_search_vector
+    from deepkt.crawler import SoundCloudSpider
+    from deepkt.discovery import compute_seed_centroid
+
+    console = Console()
+    threshold = args.threshold
+    dry_run = args.dry_run
+
+    console.print(f"[bold cyan]🧹 Pruning database (Threshold: {threshold*100:.1f}%)[/bold cyan]")
+    if dry_run:
+        console.print("[yellow]DRY RUN ACTIVE: No tracks will be deleted.[/yellow]")
+
+    conn = trackdb.get_db()
+
+    # 1. Build seed centroid
+    s = SoundCloudSpider()
+    seeds = set(s.get_seed_artists())
+    seed_centroid, seed_count = compute_seed_centroid(conn, seeds)
+
+    if seed_centroid is None:
+        console.print("[bold red]Cannot prune: Failed to build a seed centroid.[/bold red]")
+        sys.exit(1)
+
+    console.print(f"   [dim]Reference centroid built from {seed_count} seed tracks.[/dim]")
+
+    # 2. Score all tracks
+    all_features = trackdb.get_all_features(conn)
+    all_metadata = trackdb.get_all_metadata(conn)
+    meta_by_id = {m['track_id']: m for m in all_metadata}
+
+    to_prune = []
+    
+    for t in all_features:
+        track_id = t['track_id']
+        meta = meta_by_id.get(track_id)
+        if not meta:
+            continue
+            
+        v = build_search_vector(t['feature_data'])
+        if v is None or len(v) != 512:
+            continue
+            
+        vec = np.array(v, dtype=np.float32)
+        norm = np.linalg.norm(vec)
+        if norm > 0:
+            vec = vec / norm
+            sim = float(vec @ seed_centroid)
+            
+            if sim < threshold:
+                to_prune.append((sim, meta))
+
+    # Sort lowest similarity first
+    to_prune.sort(key=lambda x: x[0])
+
+    if not to_prune:
+        console.print("[green]No tracks fall below the threshold. Your library is clean![/green]")
+        conn.close()
+        return
+
+    console.print(f"\n[bold yellow]Found {len(to_prune)} tracks below {threshold*100:.1f}% similarity:[/bold yellow]")
+    
+    show_count = len(to_prune) if args.show_all else 10
+    
+    for sim, meta in to_prune[:show_count]:
+        console.print(f"  [red]{sim*100:.1f}%[/red] {meta['artist']} - {meta['title']}")
+    
+    if len(to_prune) > show_count:
+        console.print(f"  ... and {len(to_prune) - show_count} more (use --all to see them all).")
+
+    # 3. Execute Deletion
+    if not dry_run:
+        confirm = console.input(f"\n[bold red]Are you sure you want to DELETE {len(to_prune)} tracks? (y/N): [/bold red]")
+        if confirm.lower() == 'y':
+            deleted = 0
+            
+            # Open a log file to keep track of pruned tracks
+            import os
+            from datetime import datetime
+            log_path = "pruned_tracks.txt"
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"\n--- Prune Run: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (Threshold: {threshold*100:.1f}%) ---\n")
+                
+                for sim, meta in to_prune:
+                    track_id = meta['track_id']
+                    
+                    # Log it
+                    f.write(f"{sim*100:.1f}% | {meta['artist']} - {meta['title']} | {meta.get('url', '')}\n")
+                    
+                    # Delete the heavy feature data and training pairs
+                    conn.execute("DELETE FROM track_features WHERE track_id = ?", (track_id,))
+                    conn.execute("DELETE FROM training_pairs WHERE anchor_id = ? OR candidate_id = ?", (track_id, track_id))
+                    
+                    # Instead of deleting from the tracks table, mark as REJECTED
+                    # so the crawler doesn't just download it again tomorrow
+                    conn.execute("UPDATE tracks SET status = 'REJECTED' WHERE id = ?", (track_id,))
+                    
+                    deleted += 1
+            
+            conn.commit()
+            console.print(f"[bold green]Successfully pruned {deleted} tracks.[/bold green]")
+            console.print(f"[dim]A log of all pruned tracks has been saved to '{log_path}'.[/dim]")
+            console.print("[yellow]Note: You should run `python cli.py reindex` to update your ChromaDB search index.[/yellow]")
+        else:
+            console.print("[dim]Prune cancelled.[/dim]")
+
+    conn.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="deepkt",
@@ -597,6 +709,13 @@ def main():
     # --- ingest ---
     ing = subparsers.add_parser("ingest", help="Move approved URLs from crawled_links.txt into links.txt")
     ing.set_defaults(func=cmd_ingest)
+
+    # --- prune ---
+    prune = subparsers.add_parser("prune", help="Delete indexed tracks that fall below a similarity threshold to the seed centroid")
+    prune.add_argument("--threshold", type=float, default=0.85, help="Similarity threshold. Tracks below this are deleted. (default: 0.85)")
+    prune.add_argument("--dry-run", action="store_true", help="Show which tracks would be deleted without actually deleting them")
+    prune.add_argument("-a", "--all", dest="show_all", action="store_true", help="Print the full list of tracks instead of just 10")
+    prune.set_defaults(func=cmd_prune)
 
     # --- discover ---
     disc = subparsers.add_parser("discover", help="Audio-gated artist discovery from seed likes")

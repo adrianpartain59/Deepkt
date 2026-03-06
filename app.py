@@ -374,13 +374,20 @@ if st.session_state.get("player_active"):
             st.rerun()
 
         # --- Player Card ---
+        # Show centroid similarity if available
+        seed_sim_html = ""
+        seed_sim = track.get("seed_sim")
+        if seed_sim is not None:
+            color = "#00e5ff" if seed_sim >= 90 else ("#b388ff" if seed_sim >= 80 else "#ff5252")
+            seed_sim_html = f"<br><span style='color:{color}; font-size:0.9rem; font-weight:600;'>🎯 Seed Centroid Match: {seed_sim:.1f}%</span>"
+
         st.markdown(f"""
         <div class="player-card">
             <div class="player-position">
                 <span class="now-playing-dot"></span>NOW PLAYING · TRACK {idx + 1} OF {len(playlist)}
             </div>
             <div class="player-track-name">{track['title']}</div>
-            <div class="player-track-artist">{track['artist']} · {track['match_pct']}% match</div>
+            <div class="player-track-artist">{track['artist']} · {track['match_pct']}% match{seed_sim_html}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -576,6 +583,23 @@ else:
                     st.warning("No similar tracks found in your library!")
                     st.stop()
 
+                # Calc centroid similarity
+                import numpy as np
+                from deepkt.discovery import compute_seed_centroid
+                from deepkt.crawler import SoundCloudSpider
+                conn = trackdb.get_db()
+                s = SoundCloudSpider()
+                seed_centroid, _ = compute_seed_centroid(conn, set(s.get_seed_artists()))
+                conn.close()
+                
+                seed_sim_val = None
+                if seed_centroid is not None and search_vector:
+                    v = np.array(search_vector, dtype=np.float32)
+                    norm = np.linalg.norm(v)
+                    if norm > 0:
+                        v = v / norm
+                        seed_sim_val = float(v @ seed_centroid) * 100.0
+
                 # Build the playlist: query track first, then similar tracks
                 playlist = [{
                     "id": track_id,
@@ -583,6 +607,7 @@ else:
                     "title": title,
                     "url": url,
                     "match_pct": 100.0,
+                    "seed_sim": seed_sim_val
                 }] + results
 
                 # Initialize clip cache with the query track (already downloaded)
@@ -670,12 +695,30 @@ else:
                             st.warning("No similar tracks found!")
                             st.stop()
 
+                        # Calc centroid similarity
+                        import numpy as np
+                        from deepkt.discovery import compute_seed_centroid
+                        from deepkt.crawler import SoundCloudSpider
+                        conn = trackdb.get_db()
+                        s = SoundCloudSpider()
+                        seed_centroid, _ = compute_seed_centroid(conn, set(s.get_seed_artists()))
+                        conn.close()
+                        
+                        seed_sim_val = None
+                        if seed_centroid is not None and search_vector:
+                            v = np.array(search_vector, dtype=np.float32)
+                            norm = np.linalg.norm(v)
+                            if norm > 0:
+                                v = v / norm
+                                seed_sim_val = float(v @ seed_centroid) * 100.0
+
                         playlist = [{
                             "track_id": track["track_id"],
                             "artist": track["artist"],
                             "title": track["title"],
                             "url": track["url"],
                             "match_pct": 100.0,
+                            "seed_sim": seed_sim_val
                         }] + results
 
                         clip_cache = {}
