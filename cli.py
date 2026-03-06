@@ -614,14 +614,20 @@ def cmd_prune(args):
             import os
             from datetime import datetime
             log_path = "pruned_tracks.txt"
+            deleted_urls = set()
+
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"\n--- Prune Run: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (Threshold: {threshold*100:.1f}%) ---\n")
                 
                 for sim, meta in to_prune:
                     track_id = meta['track_id']
+                    url = meta.get('url', '')
                     
+                    if url:
+                        deleted_urls.add(url.strip())
+
                     # Log it
-                    f.write(f"{sim*100:.1f}% | {meta['artist']} - {meta['title']} | {meta.get('url', '')}\n")
+                    f.write(f"{sim*100:.1f}% | {meta['artist']} - {meta['title']} | {url}\n")
                     
                     # Delete the heavy feature data and training pairs
                     conn.execute("DELETE FROM track_features WHERE track_id = ?", (track_id,))
@@ -632,6 +638,15 @@ def cmd_prune(args):
                     conn.execute("UPDATE tracks SET status = 'REJECTED' WHERE id = ?", (track_id,))
                     
                     deleted += 1
+            
+            # Remove deleted URLs from links.txt
+            if os.path.exists("links.txt") and deleted_urls:
+                with open("links.txt", "r") as f:
+                    links = f.readlines()
+                with open("links.txt", "w") as f:
+                    for link in links:
+                        if link.strip() not in deleted_urls:
+                            f.write(link)
             
             conn.commit()
             console.print(f"[bold green]Successfully pruned {deleted} tracks.[/bold green]")

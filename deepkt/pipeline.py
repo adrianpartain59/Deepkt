@@ -381,6 +381,10 @@ def _run_with_progress(urls, resume_files, conn, config, results, shutdown_event
                 if shutdown_event.is_set():
                     for fut, track_info in active_an.items():
                         trackdb.update_status(conn, track_info["filename"], "DISCOVERED")
+                
+                # Force kill pools so they don't block exit on lingering sleep threads
+                dl_executor.shutdown(wait=False, cancel_futures=True)
+                an_executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _safe_delete(file_path, logger):

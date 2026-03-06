@@ -216,14 +216,19 @@ def audio_probe(spider, candidate_url, probe_count=3, temp_dir="data/discovery_t
     if not probe_candidates:
         return [], []
 
-    # Download all probes in parallel
+    import threading
+    analysis_lock = threading.Lock()
+
+    # Download all probes in parallel, but force analysis to be serial
     def _download_and_analyze(track_url):
         """Download a single track and return (embedding, url) or None."""
         try:
             dl_result = download_single(track_url, output_dir=temp_dir)
             file_path = dl_result["file_path"]
 
-            features = analyze_snippet(file_path)
+            with analysis_lock:
+                features = analyze_snippet(file_path)
+            
             embedding = features.get("clap_embedding", [])
 
             # Clean up immediately
