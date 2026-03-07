@@ -1,0 +1,5 @@
+[phases.install]
+cmds = ["pip install -r requirements-api.txt"]
+
+[start]
+cmd = "bash start.sh"
