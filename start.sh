@@ -1,7 +1,8 @@
 #!/bin/bash
-if [ ! -f data/tracks.db ] && [ -f data/tracks.db.gz ]; then
-    echo "Decompressing tracks.db.gz..."
-    gunzip -k data/tracks.db.gz
+if [ ! -f data/tracks.db ] && [ -f seed/tracks.db.gz ]; then
+    mkdir -p data
+    echo "Decompressing seed/tracks.db.gz..."
+    gunzip -c seed/tracks.db.gz > data/tracks.db
     echo "Done. $(ls -lh data/tracks.db)"
 fi
 
