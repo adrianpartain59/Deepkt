@@ -56,7 +56,7 @@ export default function UniverseCanvas() {
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
     const audioSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
-    const audioDataRef = useRef<Uint8Array>(new Uint8Array(0));
+    const audioDataRef = useRef<Uint8Array<ArrayBuffer>>(new Uint8Array(0));
     const focalGroupRef = useRef<any>(null);
 
     // Oscilloscope
