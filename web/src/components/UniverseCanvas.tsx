@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
-import { Stage, Layer, Circle, Group } from "react-konva";
-import { FaSoundcloud, FaChevronDown, FaChevronRight, FaVolumeUp, FaVolumeMute } from "react-icons/fa";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
+import { Stage, Layer, Circle, Group, Line } from "react-konva";
+import { FaSoundcloud, FaChevronLeft, FaChevronRight, FaPause, FaPlay } from "react-icons/fa";
 
 interface UniverseNode {
     id: string;
@@ -13,12 +13,18 @@ interface UniverseNode {
     url?: string;
 }
 
+const DEFAULT_ZOOM = 7.0;
+
 export default function UniverseCanvas() {
     const [nodes, setNodes] = useState<UniverseNode[]>([]);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-    const [scale, setScale] = useState(2.0); // Start zoomed much closer
-    const [position, setPosition] = useState({ x: 0, y: 0 });
+    // scale for rendering-dependent values like edgeOpacity (synced lazily)
+    const [scaleForRender, setScaleForRender] = useState(DEFAULT_ZOOM);
     const [focalTrack, setFocalTrack] = useState<UniverseNode | null>(null);
+    const [displayTrack, setDisplayTrack] = useState<UniverseNode | null>(null);
+
+    // Entry gate — requires one click to satisfy browser autoplay policy
+    const [hasEntered, setHasEntered] = useState(false);
 
     // Search State
     const [searchQuery, setSearchQuery] = useState("");
@@ -32,7 +38,6 @@ export default function UniverseCanvas() {
     // Audio Player State
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const [audioState, setAudioState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
-    const [isMuted, setIsMuted] = useState(false);
     const [autoplayBlocked, setAutoplayBlocked] = useState(false);
     const lastPlayedTrackRef = useRef<string | null>(null);
 
@@ -43,10 +48,18 @@ export default function UniverseCanvas() {
     const audioDataRef = useRef<Uint8Array>(new Uint8Array(0));
     const focalGroupRef = useRef<any>(null);
 
+    // Oscilloscope
+    const scopeCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const scopeRafRef = useRef<number>(0);
+
     // Refs for imperative high-speed math without triggering React renders
     const nodesRef = useRef<UniverseNode[]>([]);
-    const viewRef = useRef({ x: 0, y: 0, scale: 2.0 });
+    const viewRef = useRef({ x: 0, y: 0, scale: DEFAULT_ZOOM });
     const rafRef = useRef<number>(0);
+    const isDraggingRef = useRef(false);
+    const zoomCooldownRef = useRef(0);
+    const prevViewRef = useRef({ x: 0, y: 0, scale: DEFAULT_ZOOM });
+    const scaleRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // 1. Fetch Universe from FastAPI
     useEffect(() => {
@@ -67,20 +80,20 @@ export default function UniverseCanvas() {
                 }));
                 setNodes(scaled);
                 nodesRef.current = scaled;
-                // Auto-center camera precisely on the very first node so user doesn't spawn in empty space
+                // Auto-center camera on a random node so each visit starts somewhere different
                 if (scaled.length > 0) {
-                    const first = scaled[0];
+                    const first = scaled[Math.floor(Math.random() * scaled.length)];
                     const cx = window.innerWidth / 2;
                     const cy = window.innerHeight / 2;
 
                     // Use the 5.0 zoom level we now default to
-                    const startX = cx - first.x * 2.0;
-                    const startY = cy - first.y * 2.0;
+                    const startX = cx - first.x * DEFAULT_ZOOM;
+                    const startY = cy - first.y * DEFAULT_ZOOM;
 
-                    setPosition({ x: startX, y: startY });
-                    viewRef.current.x = startX;
-                    viewRef.current.y = startY;
-                    setFocalTrack(first); // Make the first node the focal track on load
+                    viewRef.current = { x: startX, y: startY, scale: DEFAULT_ZOOM };
+                    // Pause the gravity/proximity engine so it doesn't override our random pick
+                    zoomCooldownRef.current = performance.now() + 2000;
+                    setFocalTrack(first); // Make the random node the focal track on load
                 }
             })
             .catch((err) => console.error("API Error: ", err));
@@ -124,37 +137,47 @@ export default function UniverseCanvas() {
         }
     };
 
-    // 3. Zoom Logic (Mouse Wheel)
+    // 3. Zoom Logic (Mouse Wheel) — fully imperative, writes only to viewRef
     const handleWheel = (e: any) => {
         e.evt.preventDefault();
         initAudioGraph();
-        const stage = e.target.getStage();
-        const oldScale = stage.scaleX();
-
-        const pointer = stage.getPointerPosition();
+        const v = viewRef.current;
+        const stage = stageRef.current;
+        const pointer = stage?.getPointerPosition();
+        if (!pointer) return;
         const mousePointTo = {
-            x: (pointer.x - stage.x()) / oldScale,
-            y: (pointer.y - stage.y()) / oldScale,
+            x: (pointer.x - v.x) / v.scale,
+            y: (pointer.y - v.y) / v.scale,
         };
 
-        // Zoom speed
-        const scaleBy = 1.05;
-        const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
-
+        const scaleBy = 1.15;
+        const newScale = e.evt.deltaY < 0 ? v.scale * scaleBy : v.scale / scaleBy;
         const clampedScale = Math.min(Math.max(newScale, 0.001), 20.0);
 
-        setScale(clampedScale);
-        setPosition({
-            x: pointer.x - mousePointTo.x * clampedScale,
-            y: pointer.y - mousePointTo.y * clampedScale,
-        });
-
-        // Update physics ref
         viewRef.current = {
             scale: clampedScale,
             x: pointer.x - mousePointTo.x * clampedScale,
-            y: pointer.y - mousePointTo.y * clampedScale
+            y: pointer.y - mousePointTo.y * clampedScale,
         };
+
+        // Apply transform directly to stage for instant visual feedback
+        if (stage) {
+            stage.x(viewRef.current.x);
+            stage.y(viewRef.current.y);
+            stage.scaleX(clampedScale);
+            stage.scaleY(clampedScale);
+            stage.batchDraw();
+            prevViewRef.current = { ...viewRef.current };
+        }
+
+        // Pause ALL reactive systems (gravity, focal track, display track) while zooming
+        zoomCooldownRef.current = performance.now() + 1000;
+
+        // Debounce the React state sync so we don't re-render on every wheel tick
+        if (scaleRenderTimerRef.current) clearTimeout(scaleRenderTimerRef.current);
+        scaleRenderTimerRef.current = setTimeout(() => {
+            setScaleForRender(viewRef.current.scale);
+        }, 150);
     };
 
     const stageRef = useRef<any>(null);
@@ -203,8 +226,19 @@ export default function UniverseCanvas() {
                 }
             }
 
+            const zoomPaused = performance.now() < zoomCooldownRef.current;
+
+            // During zoom cooldown, freeze all reactive systems — no track changes, no gravity
+            const nearestNode = closestNode;
+            if (!zoomPaused) {
+                // displayTrack is always the nearest node (powers the sidebar)
+                setDisplayTrack((prev) => {
+                    if (prev?.id !== nearestNode?.id) return nearestNode;
+                    return prev;
+                });
+            }
+
             // Only allow nodes within a 30 screen-pixel radius to become the Focal Track
-            // This forces the user to align the node inside the reticle, rather than implicitly playing the closest faraway node.
             const maxLogicalRadius = 30 / v.scale;
             const maxDistanceSq = maxLogicalRadius * maxLogicalRadius;
 
@@ -212,25 +246,68 @@ export default function UniverseCanvas() {
                 closestNode = null;
             }
 
-            // Use React state to trigger the secondary Layer overlay
-            setFocalTrack((prev) => {
-                if (prev?.id !== closestNode?.id) return closestNode;
-                return prev;
-            });
+            // Always pull the camera toward the nearest node's exact center
+            let viewDirty = false;
+            if (nearestNode && !isDraggingRef.current && !zoomPaused) {
+                const targetX = centerX - nearestNode.x * v.scale;
+                const targetY = centerY - nearestNode.y * v.scale;
+                const dx = targetX - v.x;
+                const dy = targetY - v.y;
+                const distPx = Math.sqrt(dx * dx + dy * dy);
+
+                if (distPx > 0.5) {
+                    const strength = 0.5;
+                    const moveX = distPx < 1 ? dx : dx * strength;
+                    const moveY = distPx < 1 ? dy : dy * strength;
+                    viewRef.current.x += moveX;
+                    viewRef.current.y += moveY;
+                    viewDirty = true;
+                }
+            }
+
+            // Apply viewRef to stage only when something changed
+            const stage = stageRef.current;
+            const prevView = prevViewRef.current;
+            if (stage && (viewDirty || v.x !== prevView.x || v.y !== prevView.y || v.scale !== prevView.scale)) {
+                stage.x(v.x);
+                stage.y(v.y);
+                stage.scaleX(v.scale);
+                stage.scaleY(v.scale);
+                stage.batchDraw();
+                prevViewRef.current = { x: v.x, y: v.y, scale: v.scale };
+            }
+
+            // Use React state to trigger the secondary Layer overlay (frozen during zoom)
+            if (!zoomPaused) {
+                setFocalTrack((prev) => {
+                    if (prev?.id !== closestNode?.id) return closestNode;
+                    return prev;
+                });
+            }
 
             // Beat-reactive star: read bass amplitude and scale the focal group imperatively
             if (analyserRef.current && focalGroupRef.current) {
                 analyserRef.current.getByteFrequencyData(audioDataRef.current);
-                // Average the bass bins (bottom 15% of spectrum = kick/bass)
-                const bassEnd = Math.floor(audioDataRef.current.length * 0.15);
+
+                // Sub-bass kick detection: only the lowest 4 bins (~0-170Hz)
+                const bassEnd = 4;
                 let sum = 0;
                 for (let i = 0; i < bassEnd; i++) sum += audioDataRef.current[i];
-                const bassAvg = sum / bassEnd / 255; // 0.0 → 1.0
-                const targetScale = 1 + bassAvg;
-                // Exponential smoothing for organic feel
-                const currentScale = focalGroupRef.current.scaleX() ?? 1;
-                const smoothed = currentScale + (targetScale - currentScale) * 0.3;
+                let bassAvg = (sum / bassEnd) / 255;
+
+                // Aggressive power curve to isolate kick transients from background
+                bassAvg = Math.pow(bassAvg, 3.0);
+
+                // Resting scale shrinks so the average with kicks ≈ 1.0
+                const targetScale = 0.2 + (bassAvg * 3.0);
+                const currentScale = focalGroupRef.current.scaleX() || 1;
+
+                // Instant attack, slow decay — kicks snap out, then breathe back
+                const lerp = targetScale > currentScale ? 0.9 : 0.08;
+                const smoothed = currentScale + (targetScale - currentScale) * lerp;
+
                 focalGroupRef.current.scale({ x: smoothed, y: smoothed });
+                // Only redraw the focal layer, not the entire stage
                 focalGroupRef.current.getLayer()?.batchDraw();
             }
 
@@ -243,16 +320,15 @@ export default function UniverseCanvas() {
         };
     }, [dimensions, nodes.length]);
 
-    // 5. Fetch Nearest Neighbors when Focal Track changes
+    // 5. Fetch Nearest Neighbors when display track changes (always the closest node)
     useEffect(() => {
-        if (!focalTrack) {
+        if (!displayTrack) {
             setNeighbors([]);
             return;
         }
 
-        // We only want to fetch if this is a distinctly new focal track
         let isMounted = true;
-        fetch(`http://127.0.0.1:8000/api/neighbors/${encodeURIComponent(focalTrack.id)}`)
+        fetch(`http://127.0.0.1:8000/api/neighbors/${encodeURIComponent(displayTrack.id)}`)
             .then(res => {
                 if (!res.ok) throw new Error("Failed to fetch neighbors");
                 return res.json();
@@ -263,12 +339,12 @@ export default function UniverseCanvas() {
             .catch(err => console.error("Neighbor fetch error:", err));
 
         return () => { isMounted = false; };
-    }, [focalTrack?.id]);
+    }, [displayTrack?.id]);
 
     // 6. Audio Player — load and play 30s snippet when focal track changes
     useEffect(() => {
         const audio = audioRef.current;
-        if (!audio) return;
+        if (!audio || !hasEntered) return;
 
         if (!focalTrack) {
             audio.pause();
@@ -280,6 +356,7 @@ export default function UniverseCanvas() {
         if (lastPlayedTrackRef.current === focalTrack.id) return;
         lastPlayedTrackRef.current = focalTrack.id;
 
+        initAudioGraph();
         setAudioState('loading');
         audio.pause();
         audio.src = `http://127.0.0.1:8000/api/audio/${encodeURIComponent(focalTrack.id)}`;
@@ -292,7 +369,51 @@ export default function UniverseCanvas() {
                     setAudioState('idle');
                 }
             });
-    }, [focalTrack?.id]);
+    }, [focalTrack?.id, hasEntered]);
+
+    // 7. Oscilloscope waveform drawing loop
+    useEffect(() => {
+        const draw = () => {
+            const canvas = scopeCanvasRef.current;
+            const analyser = analyserRef.current;
+            if (!canvas || !analyser) {
+                scopeRafRef.current = requestAnimationFrame(draw);
+                return;
+            }
+
+            const ctx = canvas.getContext('2d');
+            if (!ctx) { scopeRafRef.current = requestAnimationFrame(draw); return; }
+
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyser.getByteTimeDomainData(dataArray);
+
+            const w = canvas.width;
+            const h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = '#00e5ff';
+            ctx.beginPath();
+
+            const sliceWidth = w / bufferLength;
+            let x = 0;
+            for (let i = 0; i < bufferLength; i++) {
+                const v = dataArray[i] / 128.0;
+                const y = (v * h) / 2;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+                x += sliceWidth;
+            }
+            ctx.lineTo(w, h / 2);
+            ctx.stroke();
+
+            scopeRafRef.current = requestAnimationFrame(draw);
+        };
+
+        scopeRafRef.current = requestAnimationFrame(draw);
+        return () => { cancelAnimationFrame(scopeRafRef.current); };
+    }, []);
 
     // Handle search/neighbor jump
     const jumpToNode = (node: UniverseNode) => {
@@ -307,7 +428,7 @@ export default function UniverseCanvas() {
 
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
-        const targetScale = 12.0;
+        const targetScale = DEFAULT_ZOOM;
         const targetX = cx - scaledNode.x * targetScale;
         const targetY = cy - scaledNode.y * targetScale;
 
@@ -330,18 +451,14 @@ export default function UniverseCanvas() {
             const currentY = startY + (targetY - startY) * ease;
             const currentScale = startScale + (targetScale - startScale) * ease;
 
-            setScale(currentScale);
-            setPosition({ x: currentX, y: currentY });
-
-            viewRef.current.scale = currentScale;
-            viewRef.current.x = currentX;
-            viewRef.current.y = currentY;
+            viewRef.current = { scale: currentScale, x: currentX, y: currentY };
+            setScaleForRender(currentScale);
 
             if (progress < 1) requestAnimationFrame(animateFlight);
         };
+        // Pause gravity during flight
+        zoomCooldownRef.current = performance.now() + duration + 500;
         requestAnimationFrame(animateFlight);
-
-        // Don't arbitrarily clear search results here, let the user decide when to close it
     };
 
     const handleSearch = async (e: React.FormEvent) => {
@@ -356,7 +473,7 @@ export default function UniverseCanvas() {
         const results = nodesRef.current.filter(n =>
             n.artist.toLowerCase().includes(query) ||
             n.title.toLowerCase().includes(query)
-        ).slice(0, 10);
+        ).slice(0, 50);
         setSearchResults(results);
         setIsSearching(false);
     };
@@ -380,7 +497,7 @@ export default function UniverseCanvas() {
                 // So we just pass x,y and let jumpToNode handle calculating the center
                 const cx = window.innerWidth / 2;
                 const cy = window.innerHeight / 2;
-                const targetScale = 12.0;
+                const targetScale = DEFAULT_ZOOM;
                 const targetX = cx - node.x * targetScale;
                 const targetY = cy - node.y * targetScale;
 
@@ -400,15 +517,12 @@ export default function UniverseCanvas() {
                     const currentY = startY + (targetY - startY) * ease;
                     const currentScale = startScale + (targetScale - startScale) * ease;
 
-                    setScale(currentScale);
-                    setPosition({ x: currentX, y: currentY });
-
-                    viewRef.current.scale = currentScale;
-                    viewRef.current.x = currentX;
-                    viewRef.current.y = currentY;
+                    viewRef.current = { scale: currentScale, x: currentX, y: currentY };
+                    setScaleForRender(currentScale);
 
                     if (progress < 1) requestAnimationFrame(animateFlight);
                 };
+                zoomCooldownRef.current = performance.now() + duration + 500;
                 requestAnimationFrame(animateFlight);
             }}
         >
@@ -453,7 +567,73 @@ export default function UniverseCanvas() {
         </Group>
     )), [nodes]);
 
+    // Precompute nearest-neighbor edges (each node connects to its 2 closest neighbors)
+    const memoizedEdges = useMemo(() => {
+        if (nodes.length < 2) return null;
+        const lines: { x1: number; y1: number; x2: number; y2: number }[] = [];
+        for (let i = 0; i < nodes.length; i++) {
+            const a = nodes[i];
+            let best1Dist = Infinity, best2Dist = Infinity;
+            let best1J = -1, best2J = -1;
+            for (let j = 0; j < nodes.length; j++) {
+                if (i === j) continue;
+                const dx = a.x - nodes[j].x;
+                const dy = a.y - nodes[j].y;
+                const d = dx * dx + dy * dy;
+                if (d < best1Dist) {
+                    best2Dist = best1Dist; best2J = best1J;
+                    best1Dist = d; best1J = j;
+                } else if (d < best2Dist) {
+                    best2Dist = d; best2J = j;
+                }
+            }
+            for (const bj of [best1J, best2J]) {
+                if (bj < 0) continue;
+                const b = nodes[bj];
+                const mx = (a.x + b.x) / 2;
+                const my = (a.y + b.y) / 2;
+                const hx = (b.x - a.x) * 0.3;
+                const hy = (b.y - a.y) * 0.3;
+                lines.push({ x1: mx - hx, y1: my - hy, x2: mx + hx, y2: my + hy });
+            }
+        }
+        return lines.map((l, i) => (
+            <Line
+                key={`edge-${i}`}
+                points={[l.x1, l.y1, l.x2, l.y2]}
+                stroke="rgba(255,255,255,1)"
+                strokeWidth={0.3}
+                perfectDrawEnabled={false}
+                listening={false}
+            />
+        ));
+    }, [nodes]);
+
+    // Edge opacity: brighter when zoomed in, faint when zoomed out
+    const edgeOpacity = Math.min(1, Math.max(0.08, 0.25 + (scaleForRender - DEFAULT_ZOOM) * 0.15));
+
     if (dimensions.width === 0) return null;
+
+    // Entry gate overlay — one interaction satisfies browser autoplay policy
+    if (!hasEntered) {
+        return (
+            <div
+                className="absolute inset-0 bg-black flex items-center justify-center z-50 cursor-pointer"
+                tabIndex={0}
+                autoFocus
+                onClick={() => { initAudioGraph(); setHasEntered(true); }}
+            >
+                <div className="flex flex-col items-center gap-6">
+                    <h1 className="text-7xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider">
+                        AMBIS
+                    </h1>
+                    <p className="text-l text-zinc-500 font-mono animate-pulse">
+                        Click anywhere to enter the universe...
+                    </p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div
@@ -463,62 +643,59 @@ export default function UniverseCanvas() {
                 if (autoplayBlocked && audioRef.current) {
                     audioRef.current.play()
                         .then(() => setAutoplayBlocked(false))
-                        .catch(() => {});
+                        .catch(() => { });
                 }
             }}
         >
 
-            {/* HUD Fixed Overlay */}
-            <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none flex flex-col items-center">
+            {/* Top Left: AMBIS Title */}
+            <div className="absolute top-6 left-6 z-10 pointer-events-none">
                 <h1 className="text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider title-glow">
                     AMBIS
                 </h1>
-                <p className="text-center text-xs text-zinc-500 font-mono mt-1 mb-8">
+                <p className="text-xs text-zinc-500 font-mono mt-1">
                     {nodes.length > 0 ? `${nodes.length} nodes active` : 'Initializing Map...'}
                 </p>
+            </div>
 
-                {/* Focal Track Display */}
-                {focalTrack && (
-                    <div className="bg-black/80 backdrop-blur-md border border-[#e040fb]/30 p-3 rounded-xl flex flex-col items-center animate-in fade-in slide-in-from-top-4 duration-300 w-[32rem] shadow-[0_0_30px_rgba(224,64,251,0.2)] pointer-events-auto">
-                        <div className="flex items-center gap-2 mb-1 w-full justify-center">
-                            <p className="text-[10px] text-[#00e5ff] uppercase tracking-widest font-bold">Focal Track</p>
-                            {audioState === 'loading' && (
-                                <div className="w-2.5 h-2.5 border border-[#00e5ff] border-t-transparent rounded-full animate-spin" />
-                            )}
-                            {audioState === 'playing' && !isMuted && (
-                                <div className="w-2 h-2 rounded-full bg-[#00e5ff] animate-pulse" />
-                            )}
-                        </div>
-                        <h2 className="text-xl font-bold text-white text-center w-full truncate">{focalTrack.title}</h2>
-                        <h3 className="text-sm text-zinc-400 text-center w-full truncate">{focalTrack.artist}</h3>
+            {/* Top Center: Focal Track HUD */}
+            {focalTrack && (
+                <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10">
+                    <div className="bg-black/80 backdrop-blur-md border border-[#e040fb]/30 px-5 py-3 rounded-xl flex items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-300 max-w-[28rem] shadow-[0_0_25px_rgba(224,64,251,0.2)] pointer-events-auto">
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();
                                 if (audioRef.current) {
-                                    const next = !isMuted;
-                                    audioRef.current.muted = next;
-                                    setIsMuted(next);
-                                    if (!next && autoplayBlocked) {
+                                    if (audioState === 'playing') {
+                                        audioRef.current.pause();
+                                    } else {
                                         audioRef.current.play()
                                             .then(() => setAutoplayBlocked(false))
-                                            .catch(() => {});
+                                            .catch(() => { });
                                     }
                                 }
                             }}
-                            className="mt-2 text-zinc-600 hover:text-[#00e5ff] transition-colors"
-                            title={isMuted ? "Unmute" : "Mute"}
+                            className="text-zinc-500 hover:text-[#00e5ff] transition-colors shrink-0"
+                            title={audioState === 'playing' ? "Pause" : "Play"}
                         >
-                            {isMuted ? <FaVolumeMute size={11} /> : <FaVolumeUp size={11} />}
+                            {audioState === 'playing' ? <FaPause size={16} /> : <FaPlay size={16} />}
                         </button>
-                        {autoplayBlocked && (
-                            <p className="text-[9px] text-zinc-600 font-mono mt-1">click to enable audio</p>
-                        )}
+                        <div className="min-w-0 flex-1">
+                            <p className="text-base font-bold text-white truncate">{focalTrack.title}</p>
+                            <p className="text-sm text-zinc-400 truncate">{focalTrack.artist}</p>
+                        </div>
+                        <canvas
+                            ref={scopeCanvasRef}
+                            width={80}
+                            height={32}
+                            className="shrink-0 opacity-80"
+                        />
                     </div>
-                )}
-            </div>
+                </div>
+            )}
 
             {/* Top Right: Search Bar */}
-            <div className="absolute top-6 right-6 z-30 w-80">
+            <div className="absolute top-6 right-10 z-30 w-80">
                 <form onSubmit={handleSearch} className="relative">
                     <input
                         type="text"
@@ -527,13 +704,24 @@ export default function UniverseCanvas() {
                         placeholder="Search artist or title..."
                         className="w-full bg-black/80 backdrop-blur-md border border-white/20 rounded-full py-3 px-5 text-sm font-mono text-white placeholder-zinc-500 focus:outline-none focus:border-[#00e5ff] focus:ring-1 focus:ring-[#00e5ff] transition-all"
                     />
-                    <button type="submit" className="absolute right-2 top-2 bottom-2 px-4 rounded-full bg-white/10 hover:bg-white/20 text-xs font-bold transition-colors">
-                        {isSearching ? '...' : 'JUMP'}
+                    <button
+                        type="button"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (nodesRef.current.length === 0) return;
+                            const randomNode = nodesRef.current[Math.floor(Math.random() * nodesRef.current.length)];
+                            jumpToNode(randomNode);
+                            setSearchResults([]);
+                            setSearchQuery("");
+                        }}
+                        className="absolute right-2 top-2 bottom-2 px-4 rounded-full bg-white/10 hover:bg-white/20 text-xs font-bold transition-colors"
+                    >
+                        RANDOM
                     </button>
                 </form>
 
                 {searchResults.length > 0 && (
-                    <div className="mt-2 bg-black/90 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl max-h-96 overflow-y-auto">
+                    <div className="mt-2 bg-black/90 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl max-h-[70vh] overflow-y-auto">
                         {searchResults.map((result, i) => (
                             <div
                                 key={result.id + i}
@@ -552,72 +740,70 @@ export default function UniverseCanvas() {
                 )}
             </div>
 
-            {/* Top Right (Below Search): Local Neighborhood Sidebar */}
-            <div className="absolute top-24 right-5 z-20 flex flex-col items-end">
-                {/* Collapse Toggle Pill */}
-                <button
-                    onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                    className="mb-2 px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 text-xs font-bold text-white transition-all flex items-center gap-2"
-                >
-                    {isSidebarOpen ? (
-                        <><FaChevronDown className="text-[10px]" /> Hide Neighbors</>
-                    ) : (
-                        <><FaChevronRight className="text-[10px]" /> Local Neighborhood</>
-                    )}
-                </button>
+            {/* Right: Local Neighborhood Sidebar — docked to screen edge */}
+            {displayTrack && (
+                <div className="absolute top-[5rem] right-10 z-20 flex flex-row items-start">
+                    {/* Thin full-height toggle tab on the left of the panel */}
+                    <button
+                        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                        className="w-5 self-stretch min-h-[3rem] flex items-center justify-center bg-black/80 backdrop-blur-xl border-l border-y border-white/20 rounded-l-xl hover:bg-white/15 transition-colors shrink-0"
+                        title={isSidebarOpen ? 'Hide neighbors' : 'Show neighbors'}
+                    >
+                        {isSidebarOpen
+                            ? <FaChevronRight size={7} className="text-white/40" />
+                            : <FaChevronLeft size={7} className="text-white/40" />
+                        }
+                    </button>
 
-                {/* Sidebar Drawer */}
-                {isSidebarOpen && focalTrack && (
-                    <div className="w-80 bg-black/80 backdrop-blur-xl border border-white/20 rounded-2xl overflow-hidden shadow-2xl animate-in fade-in slide-in-from-right-8 duration-300">
-                        {/* Header: The Focal Track itself */}
-                        <div className="p-4 bg-gradient-to-br from-[#e040fb]/20 to-[#00e5ff]/20 border-b border-white/20">
-                            <p className="text-[10px] text-[#00e5ff] uppercase tracking-widest font-bold mb-1">Local Center</p>
-                            <div className="flex justify-between items-center gap-3">
+                    {/* Drawer panel */}
+                    {isSidebarOpen && (
+                        <div className="w-80 bg-black/80 backdrop-blur-xl border border-white/20 rounded-r-xl overflow-hidden shadow-2xl animate-in fade-in slide-in-from-right-4 duration-300">
+                            {/* Header */}
+                            <div className="px-3 py-3 bg-gradient-to-br from-[#e040fb]/20 to-[#00e5ff]/20 border-b border-white/20 flex items-center gap-2">
                                 <div className="min-w-0 flex-1">
-                                    <p className="text-sm font-bold text-white truncate">{focalTrack.title}</p>
-                                    <p className="text-xs text-zinc-300 truncate">{focalTrack.artist}</p>
+                                    <p className="text-m font-bold text-white truncate leading-tight">{displayTrack.title}</p>
+                                    <p className="text-sm text-zinc-400 truncate leading-tight">{displayTrack.artist}</p>
                                 </div>
-                                {/* Soundcloud Link */}
-                                <a href={focalTrack.url || `https://soundcloud.com/search?q=${encodeURIComponent(focalTrack.artist + ' ' + focalTrack.title)}`} target="_blank" rel="noreferrer"
-                                    className="text-[#ff5500] hover:text-white transition-colors p-2 bg-white/10 rounded-full shrink-0"
+                                <a href={displayTrack.url || `https://soundcloud.com/search?q=${encodeURIComponent(displayTrack.artist + ' ' + displayTrack.title)}`} target="_blank" rel="noreferrer"
+                                    className="text-[#ff5500] hover:text-white transition-colors p-1.5 bg-white/10 rounded-full shrink-0"
                                     onClick={(e) => e.stopPropagation()}
                                 >
-                                    <FaSoundcloud size={18} />
+                                    <FaSoundcloud size={14} />
                                 </a>
                             </div>
-                        </div>
 
-                        {/* Nearest Neighbors List */}
-                        <div className="max-h-[60vh] overflow-y-auto">
-                            {neighbors.length > 0 ? (
-                                neighbors.map((n, i) => (
-                                    <div key={n.id}
-                                        onClick={() => jumpToNode(n as UniverseNode)}
-                                        className="p-3 border-b border-white/5 hover:bg-white/10 cursor-pointer transition-colors group flex justify-between items-center gap-3">
-                                        <div className="font-mono text-[10px] text-zinc-500 w-4 text-right shrink-0">{i + 1}</div>
-                                        <div className="min-w-0 flex-1">
-                                            <p className="text-[13px] font-bold text-zinc-200 group-hover:text-white truncate transition-colors">{n.title}</p>
-                                            <p className="text-[11px] text-zinc-500 group-hover:text-zinc-300 truncate transition-colors">{n.artist}</p>
+                            {/* Nearest Neighbors List */}
+                            <div className="max-h-[calc(100vh-9rem)] overflow-y-auto">
+                                {neighbors.length > 0 ? (
+                                    neighbors.map((n, i) => (
+                                        <div key={n.id}
+                                            onClick={() => jumpToNode(n as UniverseNode)}
+                                            className="p-3 border-b border-white/5 hover:bg-white/10 cursor-pointer transition-colors group flex justify-between items-center gap-3">
+                                            <div className="font-mono text-[10px] text-zinc-500 w-4 text-right shrink-0">{i + 1}</div>
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-[13px] font-bold text-zinc-200 group-hover:text-white truncate transition-colors">{n.title}</p>
+                                                <p className="text-[11px] text-zinc-500 group-hover:text-zinc-300 truncate transition-colors">{n.artist}</p>
+                                            </div>
+                                            {n.url && (
+                                                <a href={n.url} target="_blank" rel="noreferrer"
+                                                    className="text-zinc-600 hover:text-[#ff5500] transition-colors p-1.5 shrink-0"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    <FaSoundcloud size={16} />
+                                                </a>
+                                            )}
                                         </div>
-                                        {n.url && (
-                                            <a href={n.url} target="_blank" rel="noreferrer"
-                                                className="text-zinc-600 hover:text-[#ff5500] transition-colors p-1.5 shrink-0"
-                                                onClick={(e) => e.stopPropagation()}
-                                            >
-                                                <FaSoundcloud size={16} />
-                                            </a>
-                                        )}
+                                    ))
+                                ) : (
+                                    <div className="p-8 flex items-center justify-center">
+                                        <div className="w-5 h-5 border-2 border-[#00e5ff] border-t-transparent flex-shrink-0 rounded-full animate-spin"></div>
                                     </div>
-                                ))
-                            ) : (
-                                <div className="p-8 flex items-center justify-center">
-                                    <div className="w-5 h-5 border-2 border-[#00e5ff] border-t-transparent flex-shrink-0 rounded-full animate-spin"></div>
-                                </div>
-                            )}
+                                )}
+                            </div>
                         </div>
-                    </div>
-                )}
-            </div>
+                    )}
+                </div>
+            )}
 
             {/* Dead-Center Focal Reticle */}
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border border-white/20 pointer-events-none z-10 flex items-center justify-center">
@@ -630,6 +816,7 @@ export default function UniverseCanvas() {
                 crossOrigin="anonymous"
                 loop
                 onPlaying={() => setAudioState('playing')}
+                onPause={() => setAudioState('idle')}
                 onWaiting={() => setAudioState('loading')}
                 onError={() => setAudioState('error')}
                 style={{ display: 'none' }}
@@ -642,25 +829,29 @@ export default function UniverseCanvas() {
                 height={dimensions.height}
                 draggable
                 onWheel={handleWheel}
-                scaleX={scale}
-                scaleY={scale}
-                x={position.x}
-                y={position.y}
+                scaleX={DEFAULT_ZOOM}
+                scaleY={DEFAULT_ZOOM}
+                x={0}
+                y={0}
+                onDragStart={() => { isDraggingRef.current = true; }}
                 onDragMove={(e) => {
-                    // Update physics ref continuously while dragging
                     viewRef.current.x = e.target.x();
                     viewRef.current.y = e.target.y();
                 }}
                 onDragEnd={(e) => {
-                    setPosition({ x: e.target.x(), y: e.target.y() });
+                    isDraggingRef.current = false;
                     viewRef.current.x = e.target.x();
                     viewRef.current.y = e.target.y();
+                    zoomCooldownRef.current = performance.now() + 600;
                 }}
             >
                 {/* 
                   By separating the dots into a memoized Layer that NEVER re-renders based on focalTrack state, 
                   we eliminate the 11,000-component React lag entirely.
                 */}
+                <Layer listening={false} opacity={edgeOpacity}>
+                    {memoizedEdges}
+                </Layer>
                 <Layer>
                     {memoizedNodes}
                 </Layer>
