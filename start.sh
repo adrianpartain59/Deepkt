@@ -5,4 +5,4 @@ if [ ! -f data/tracks.db ] && [ -f data/tracks.db.gz ]; then
     echo "Done. $(ls -lh data/tracks.db)"
 fi
 
-exec uvicorn api:app --host 0.0.0.0 --port ${PORT:-8000}
+exec python -m uvicorn api:app --host 0.0.0.0 --port ${PORT:-8000}
