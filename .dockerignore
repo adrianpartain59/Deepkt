@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+data/
+.git/
+node_modules/
+web/.next/
+*.log
+.DS_Store
