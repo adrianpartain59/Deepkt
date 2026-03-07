@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo } from "react";
 import { Stage, Layer, Circle, Group } from "react-konva";
-import { FaSoundcloud, FaChevronDown, FaChevronRight } from "react-icons/fa";
+import { FaSoundcloud, FaChevronDown, FaChevronRight, FaVolumeUp, FaVolumeMute } from "react-icons/fa";
 
 interface UniverseNode {
     id: string;
@@ -16,7 +16,7 @@ interface UniverseNode {
 export default function UniverseCanvas() {
     const [nodes, setNodes] = useState<UniverseNode[]>([]);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-    const [scale, setScale] = useState(1.5); // Start slightly zoomed in
+    const [scale, setScale] = useState(2.0); // Start zoomed much closer
     const [position, setPosition] = useState({ x: 0, y: 0 });
     const [focalTrack, setFocalTrack] = useState<UniverseNode | null>(null);
 
@@ -29,9 +29,23 @@ export default function UniverseCanvas() {
     const [neighbors, setNeighbors] = useState<{ id: string, artist: string, title: string, x: number, y: number, url?: string }[]>([]);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
+    // Audio Player State
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const [audioState, setAudioState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
+    const [isMuted, setIsMuted] = useState(false);
+    const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+    const lastPlayedTrackRef = useRef<string | null>(null);
+
+    // Web Audio analysis refs (for beat-reactive star)
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const analyserRef = useRef<AnalyserNode | null>(null);
+    const audioSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+    const audioDataRef = useRef<Uint8Array>(new Uint8Array(0));
+    const focalGroupRef = useRef<any>(null);
+
     // Refs for imperative high-speed math without triggering React renders
     const nodesRef = useRef<UniverseNode[]>([]);
-    const viewRef = useRef({ x: 0, y: 0, scale: 1.5 });
+    const viewRef = useRef({ x: 0, y: 0, scale: 2.0 });
     const rafRef = useRef<number>(0);
 
     // 1. Fetch Universe from FastAPI
@@ -44,12 +58,12 @@ export default function UniverseCanvas() {
             })
             .then((data) => {
                 // The UMAP math floats are usually [-5.0 to 10.0]. 
-                // We will scale them up by * 2000 to spread them across a ~30,000px virtual map
-                // to explicitly enforce wide spacing and prevent node density overlapping.
+                // We scales them up to spread them across the virtual map.
+                // We're using * 500 (reduced from 2000) so the Supervised UMAP clusters remain distinct but sit closer together.
                 const scaled = data.map((n: any) => ({
                     ...n,
-                    x: n.x * 2000,
-                    y: n.y * 2000,
+                    x: n.x * 500,
+                    y: n.y * 500,
                 }));
                 setNodes(scaled);
                 nodesRef.current = scaled;
@@ -58,11 +72,15 @@ export default function UniverseCanvas() {
                     const first = scaled[0];
                     const cx = window.innerWidth / 2;
                     const cy = window.innerHeight / 2;
-                    const startX = cx - first.x * 1.5;
-                    const startY = cy - first.y * 1.5;
+
+                    // Use the 5.0 zoom level we now default to
+                    const startX = cx - first.x * 2.0;
+                    const startY = cy - first.y * 2.0;
+
                     setPosition({ x: startX, y: startY });
                     viewRef.current.x = startX;
                     viewRef.current.y = startY;
+                    setFocalTrack(first); // Make the first node the focal track on load
                 }
             })
             .catch((err) => console.error("API Error: ", err));
@@ -83,9 +101,33 @@ export default function UniverseCanvas() {
         return () => window.removeEventListener("resize", handleResize);
     }, []);
 
+    // Initialise the Web Audio graph from a user gesture so AudioContext is 'running', not 'suspended'.
+    // Safe to call repeatedly — guarded by audioSourceRef.
+    const initAudioGraph = () => {
+        if (audioSourceRef.current || !audioRef.current) {
+            audioContextRef.current?.resume();
+            return;
+        }
+        try {
+            const ctx = new AudioContext();
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 256;
+            audioDataRef.current = new Uint8Array(analyser.frequencyBinCount);
+            const source = ctx.createMediaElementSource(audioRef.current);
+            source.connect(analyser);
+            analyser.connect(ctx.destination);
+            audioContextRef.current = ctx;
+            analyserRef.current = analyser;
+            audioSourceRef.current = source;
+        } catch (e) {
+            console.error('Audio graph init failed:', e);
+        }
+    };
+
     // 3. Zoom Logic (Mouse Wheel)
     const handleWheel = (e: any) => {
         e.evt.preventDefault();
+        initAudioGraph();
         const stage = e.target.getStage();
         const oldScale = stage.scaleX();
 
@@ -99,7 +141,7 @@ export default function UniverseCanvas() {
         const scaleBy = 1.05;
         const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
 
-        const clampedScale = Math.min(Math.max(newScale, 0.8), 3.0);
+        const clampedScale = Math.min(Math.max(newScale, 0.001), 20.0);
 
         setScale(clampedScale);
         setPosition({
@@ -176,6 +218,22 @@ export default function UniverseCanvas() {
                 return prev;
             });
 
+            // Beat-reactive star: read bass amplitude and scale the focal group imperatively
+            if (analyserRef.current && focalGroupRef.current) {
+                analyserRef.current.getByteFrequencyData(audioDataRef.current);
+                // Average the bass bins (bottom 15% of spectrum = kick/bass)
+                const bassEnd = Math.floor(audioDataRef.current.length * 0.15);
+                let sum = 0;
+                for (let i = 0; i < bassEnd; i++) sum += audioDataRef.current[i];
+                const bassAvg = sum / bassEnd / 255; // 0.0 → 1.0
+                const targetScale = 1 + bassAvg;
+                // Exponential smoothing for organic feel
+                const currentScale = focalGroupRef.current.scaleX() ?? 1;
+                const smoothed = currentScale + (targetScale - currentScale) * 0.3;
+                focalGroupRef.current.scale({ x: smoothed, y: smoothed });
+                focalGroupRef.current.getLayer()?.batchDraw();
+            }
+
             rafRef.current = requestAnimationFrame(updateFocalTrack);
         };
 
@@ -194,7 +252,7 @@ export default function UniverseCanvas() {
 
         // We only want to fetch if this is a distinctly new focal track
         let isMounted = true;
-        fetch(`http://127.0.0.1:8000/api/neighbors/${focalTrack.id}`)
+        fetch(`http://127.0.0.1:8000/api/neighbors/${encodeURIComponent(focalTrack.id)}`)
             .then(res => {
                 if (!res.ok) throw new Error("Failed to fetch neighbors");
                 return res.json();
@@ -205,6 +263,35 @@ export default function UniverseCanvas() {
             .catch(err => console.error("Neighbor fetch error:", err));
 
         return () => { isMounted = false; };
+    }, [focalTrack?.id]);
+
+    // 6. Audio Player — load and play 30s snippet when focal track changes
+    useEffect(() => {
+        const audio = audioRef.current;
+        if (!audio) return;
+
+        if (!focalTrack) {
+            audio.pause();
+            setAudioState('idle');
+            lastPlayedTrackRef.current = null;
+            return;
+        }
+
+        if (lastPlayedTrackRef.current === focalTrack.id) return;
+        lastPlayedTrackRef.current = focalTrack.id;
+
+        setAudioState('loading');
+        audio.pause();
+        audio.src = `http://127.0.0.1:8000/api/audio/${encodeURIComponent(focalTrack.id)}`;
+        audio.load();
+        audio.play()
+            .then(() => setAutoplayBlocked(false))
+            .catch((err) => {
+                if (err.name === 'NotAllowedError') {
+                    setAutoplayBlocked(true);
+                    setAudioState('idle');
+                }
+            });
     }, [focalTrack?.id]);
 
     // Handle search/neighbor jump
@@ -220,7 +307,7 @@ export default function UniverseCanvas() {
 
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
-        const targetScale = 1.6;
+        const targetScale = 12.0;
         const targetX = cx - scaledNode.x * targetScale;
         const targetY = cy - scaledNode.y * targetScale;
 
@@ -293,7 +380,7 @@ export default function UniverseCanvas() {
                 // So we just pass x,y and let jumpToNode handle calculating the center
                 const cx = window.innerWidth / 2;
                 const cy = window.innerHeight / 2;
-                const targetScale = 1.6;
+                const targetScale = 12.0;
                 const targetX = cx - node.x * targetScale;
                 const targetY = cy - node.y * targetScale;
 
@@ -325,34 +412,34 @@ export default function UniverseCanvas() {
                 requestAnimationFrame(animateFlight);
             }}
         >
-            {/* Bloom/Glow (Hit area is implicitly the union of children, or we can add a specific hit circle) */}
+            {/* Bloom/Glow */}
             <Circle
-                radius={20} // Widened from 8 to 20
+                radius={6}
                 fillRadialGradientStartPoint={{ x: 0, y: 0 }}
                 fillRadialGradientStartRadius={0}
                 fillRadialGradientEndPoint={{ x: 0, y: 0 }}
-                fillRadialGradientEndRadius={10} // Widened from 8 to 20
+                fillRadialGradientEndRadius={6}
                 fillRadialGradientColorStops={[
-                    0, 'rgba(255, 255, 255, 0.5)',
-                    0.3, 'rgba(255, 255, 255, 0.2)',
+                    0, 'rgba(255, 255, 255, 0.35)',
+                    0.4, 'rgba(255, 255, 255, 0.1)',
                     1, 'rgba(255, 255, 255, 0)'
                 ]}
                 perfectDrawEnabled={false}
                 listening={true}
                 hitFunc={(context, shape) => {
                     context.beginPath();
-                    context.arc(0, 0, 15, 0, Math.PI * 2, true);
+                    context.arc(0, 0, 7, 0, Math.PI * 2, true);
                     context.closePath();
                     context.fillStrokeShape(shape);
                 }}
             />
             {/* Core */}
             <Circle
-                radius={2.5}
+                radius={0.8}
                 fillRadialGradientStartPoint={{ x: 0, y: 0 }}
                 fillRadialGradientStartRadius={0}
                 fillRadialGradientEndPoint={{ x: 0, y: 0 }}
-                fillRadialGradientEndRadius={2.5}
+                fillRadialGradientEndRadius={0.8}
                 fillRadialGradientColorStops={[
                     0, '#ffffff',
                     0.4, '#ffffff',
@@ -369,12 +456,22 @@ export default function UniverseCanvas() {
     if (dimensions.width === 0) return null;
 
     return (
-        <div className="absolute inset-0 bg-black cursor-grab active:cursor-grabbing">
+        <div
+            className="absolute inset-0 bg-black cursor-grab active:cursor-grabbing"
+            onClick={() => {
+                initAudioGraph();
+                if (autoplayBlocked && audioRef.current) {
+                    audioRef.current.play()
+                        .then(() => setAutoplayBlocked(false))
+                        .catch(() => {});
+                }
+            }}
+        >
 
             {/* HUD Fixed Overlay */}
             <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none flex flex-col items-center">
-                <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider title-glow">
-                    AMBYS
+                <h1 className="text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider title-glow">
+                    AMBIS
                 </h1>
                 <p className="text-center text-xs text-zinc-500 font-mono mt-1 mb-8">
                     {nodes.length > 0 ? `${nodes.length} nodes active` : 'Initializing Map...'}
@@ -382,16 +479,46 @@ export default function UniverseCanvas() {
 
                 {/* Focal Track Display */}
                 {focalTrack && (
-                    <div className="bg-black/80 backdrop-blur-md border border-[#e040fb]/30 p-3 rounded-xl flex flex-col items-center animate-in fade-in slide-in-from-top-4 duration-300 w-[32rem] shadow-[0_0_30px_rgba(224,64,251,0.2)]">
-                        <p className="text-[10px] text-[#00e5ff] uppercase tracking-widest font-bold mb-1">Focal Track</p>
+                    <div className="bg-black/80 backdrop-blur-md border border-[#e040fb]/30 p-3 rounded-xl flex flex-col items-center animate-in fade-in slide-in-from-top-4 duration-300 w-[32rem] shadow-[0_0_30px_rgba(224,64,251,0.2)] pointer-events-auto">
+                        <div className="flex items-center gap-2 mb-1 w-full justify-center">
+                            <p className="text-[10px] text-[#00e5ff] uppercase tracking-widest font-bold">Focal Track</p>
+                            {audioState === 'loading' && (
+                                <div className="w-2.5 h-2.5 border border-[#00e5ff] border-t-transparent rounded-full animate-spin" />
+                            )}
+                            {audioState === 'playing' && !isMuted && (
+                                <div className="w-2 h-2 rounded-full bg-[#00e5ff] animate-pulse" />
+                            )}
+                        </div>
                         <h2 className="text-xl font-bold text-white text-center w-full truncate">{focalTrack.title}</h2>
                         <h3 className="text-sm text-zinc-400 text-center w-full truncate">{focalTrack.artist}</h3>
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (audioRef.current) {
+                                    const next = !isMuted;
+                                    audioRef.current.muted = next;
+                                    setIsMuted(next);
+                                    if (!next && autoplayBlocked) {
+                                        audioRef.current.play()
+                                            .then(() => setAutoplayBlocked(false))
+                                            .catch(() => {});
+                                    }
+                                }
+                            }}
+                            className="mt-2 text-zinc-600 hover:text-[#00e5ff] transition-colors"
+                            title={isMuted ? "Unmute" : "Mute"}
+                        >
+                            {isMuted ? <FaVolumeMute size={11} /> : <FaVolumeUp size={11} />}
+                        </button>
+                        {autoplayBlocked && (
+                            <p className="text-[9px] text-zinc-600 font-mono mt-1">click to enable audio</p>
+                        )}
                     </div>
                 )}
             </div>
 
             {/* Top Right: Search Bar */}
-            <div className="absolute top-6 right-6 z-20 w-80">
+            <div className="absolute top-6 right-6 z-30 w-80">
                 <form onSubmit={handleSearch} className="relative">
                     <input
                         type="text"
@@ -461,7 +588,7 @@ export default function UniverseCanvas() {
                         </div>
 
                         {/* Nearest Neighbors List */}
-                        <div className="max-h-[50vh] overflow-y-auto">
+                        <div className="max-h-[60vh] overflow-y-auto">
                             {neighbors.length > 0 ? (
                                 neighbors.map((n, i) => (
                                     <div key={n.id}
@@ -496,6 +623,17 @@ export default function UniverseCanvas() {
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border border-white/20 pointer-events-none z-10 flex items-center justify-center">
                 <div className="w-1 h-1 bg-white rounded-full"></div>
             </div>
+
+            {/* Hidden Audio Player */}
+            <audio
+                ref={audioRef}
+                crossOrigin="anonymous"
+                loop
+                onPlaying={() => setAudioState('playing')}
+                onWaiting={() => setAudioState('loading')}
+                onError={() => setAudioState('error')}
+                style={{ display: 'none' }}
+            />
 
             {/* 2D Interactive Map */}
             <Stage
@@ -532,11 +670,15 @@ export default function UniverseCanvas() {
                     {focalTrack && (
                         <Group x={focalTrack.x} y={focalTrack.y} listening={false}
                             ref={(node) => {
+                                focalGroupRef.current = node;
                                 if (node && prevFocalIdRef.current !== focalTrack.id) {
                                     prevFocalIdRef.current = focalTrack.id;
                                     // Quick pop-in animation using scale
                                     node.scale({ x: 0.3, y: 0.3 });
                                     import('konva').then((Konva) => {
+                                        // Ensure node is still attached to a layer before tweening
+                                        if (!node || !node.getLayer()) return;
+
                                         new Konva.default.Tween({
                                             node: node,
                                             scaleX: 1,
@@ -550,11 +692,11 @@ export default function UniverseCanvas() {
                         >
                             {/* Bloom/Glow */}
                             <Circle
-                                radius={40}
+                                radius={6}
                                 fillRadialGradientStartPoint={{ x: 0, y: 0 }}
                                 fillRadialGradientStartRadius={1}
                                 fillRadialGradientEndPoint={{ x: 0, y: 0 }}
-                                fillRadialGradientEndRadius={40}
+                                fillRadialGradientEndRadius={6}
                                 fillRadialGradientColorStops={[
                                     0, 'rgba(0, 229, 255, 0.8)',
                                     0.4, 'rgba(0, 229, 255, 0.3)',
@@ -564,11 +706,11 @@ export default function UniverseCanvas() {
                             />
                             {/* Core */}
                             <Circle
-                                radius={15} // Slightly larger to allow for a softer grade
+                                radius={1.5}
                                 fillRadialGradientStartPoint={{ x: 0, y: 0 }}
                                 fillRadialGradientStartRadius={0}
                                 fillRadialGradientEndPoint={{ x: 0, y: 0 }}
-                                fillRadialGradientEndRadius={15}
+                                fillRadialGradientEndRadius={1.5}
                                 fillRadialGradientColorStops={[
                                     0, '#ffffff',
                                     0.4, '#ffffff',

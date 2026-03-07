@@ -155,10 +155,10 @@ def get_track_audio(track_id: str):
             raise HTTPException(status_code=404, detail="Track URL not found")
             
         try:
-            # Download a 30s snippet on the fly
-            # Note: download_single handles filename formatting automatically: '{id}.mp3'
             result = download_single(track["url"], output_dir=cache_dir)
-            file_path = result["file_path"]
+            # Rename to {track_id}.mp3 so the cache check works on next request
+            if result["file_path"] != file_path:
+                os.rename(result["file_path"], file_path)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to download audio: {str(e)}")
             
