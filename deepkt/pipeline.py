@@ -319,6 +319,11 @@ def _run_with_progress(urls, resume_files, conn, config, results, shutdown_event
                             )
                             trackdb.update_status(conn, dl_result["filename"], "DOWNLOADED")
 
+                            # Store tags if available
+                            if dl_result.get("tags"):
+                                import json
+                                trackdb.update_tags(conn, dl_result["filename"], json.dumps(dl_result["tags"]))
+
                             # Check if already analyzed (idempotent)
                             existing = trackdb.get_features(conn, dl_result["filename"])
                             if existing:

@@ -1,4 +1,8 @@
+import json
 import os
+import statistics
+from collections import defaultdict
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -134,6 +138,70 @@ def get_track_metadata(track_id: str):
         url=track.get("url"),
         status=track["status"]
     )
+
+class TagZone(BaseModel):
+    tag: str
+    x: float
+    y: float
+    count: int
+
+@app.get("/api/tag-zones", response_model=List[TagZone])
+def get_tag_zones():
+    """
+    Divides the universe into a 3x3 grid using quantile-based splits so each
+    cell has roughly equal track density, then returns the dominant tag per cell.
+    """
+    conn = trackdb.get_db()
+    rows = conn.execute('''
+        SELECT x, y, tags FROM tracks
+        WHERE status = 'INDEXED' AND tags IS NOT NULL AND tags != '[]' AND x IS NOT NULL
+    ''').fetchall()
+    conn.close()
+
+    if not rows:
+        return []
+
+    tracks_data = [(row[0], row[1], json.loads(row[2])) for row in rows]
+    xs_all = sorted(t[0] for t in tracks_data)
+    ys_all = sorted(t[1] for t in tracks_data)
+
+    n = len(xs_all)
+    x_cuts = [xs_all[0] - 1, xs_all[n // 3], xs_all[2 * n // 3], xs_all[-1] + 1]
+    y_cuts = [ys_all[0] - 1, ys_all[n // 3], ys_all[2 * n // 3], ys_all[-1] + 1]
+
+    cells = []
+    for i in range(3):
+        for j in range(3):
+            x_lo, x_hi = x_cuts[i], x_cuts[i + 1]
+            y_lo, y_hi = y_cuts[j], y_cuts[j + 1]
+
+            tag_counts: dict[str, int] = defaultdict(int)
+            cell_xs, cell_ys = [], []
+            for x, y, tags in tracks_data:
+                if x_lo <= x < x_hi and y_lo <= y < y_hi:
+                    cell_xs.append(x)
+                    cell_ys.append(y)
+                    for tag in tags:
+                        tag_counts[tag] += 1
+
+            if tag_counts:
+                ranked = sorted(tag_counts.items(), key=lambda t: -t[1])
+                median_x = statistics.median(cell_xs)
+                median_y = statistics.median(cell_ys)
+                cells.append((ranked, median_x, median_y))
+
+    cells.sort(key=lambda c: -c[0][0][1])
+
+    used_tags: set[str] = set()
+    zones = []
+    for ranked, cx, cy in cells:
+        for tag, count in ranked:
+            if tag not in used_tags:
+                used_tags.add(tag)
+                zones.append(TagZone(tag=tag, x=cx, y=cy, count=count))
+                break
+
+    return zones
 
 @app.get("/api/audio/{track_id}")
 def get_track_audio(track_id: str):

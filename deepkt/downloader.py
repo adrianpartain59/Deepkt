@@ -74,6 +74,11 @@ def download_single(url, output_dir="data/tmp"):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"yt-dlp reported success, but no MP3 produced for {url} at {file_path}")
 
+    tags = [t.lower() for t in (info.get('tags', []) or [])]
+    genre = (info.get('genre', '') or '').lower()
+    if genre and genre not in tags:
+        tags.append(genre)
+
     return {
         "file_path": file_path,
         "filename": filename,
@@ -81,6 +86,7 @@ def download_single(url, output_dir="data/tmp"):
         "title": title,
         "url": url,
         "duration": duration,
+        "tags": tags,
     }
 
 

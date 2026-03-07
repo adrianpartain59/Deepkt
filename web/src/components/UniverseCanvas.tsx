@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
-import { Stage, Layer, Circle, Group, Line } from "react-konva";
+import { Stage, Layer, Circle, Group, Line, Text } from "react-konva";
 import { FaSoundcloud, FaChevronLeft, FaChevronRight, FaPause, FaPlay } from "react-icons/fa";
 
 interface UniverseNode {
@@ -13,7 +13,14 @@ interface UniverseNode {
     url?: string;
 }
 
-const DEFAULT_ZOOM = 7.0;
+interface TagZone {
+    tag: string;
+    x: number;
+    y: number;
+    count: number;
+}
+
+const DEFAULT_ZOOM = 5.0;
 
 export default function UniverseCanvas() {
     const [nodes, setNodes] = useState<UniverseNode[]>([]);
@@ -22,6 +29,9 @@ export default function UniverseCanvas() {
     const [scaleForRender, setScaleForRender] = useState(DEFAULT_ZOOM);
     const [focalTrack, setFocalTrack] = useState<UniverseNode | null>(null);
     const [displayTrack, setDisplayTrack] = useState<UniverseNode | null>(null);
+
+    // Tag Zones
+    const [tagZones, setTagZones] = useState<TagZone[]>([]);
 
     // Entry gate — requires one click to satisfy browser autoplay policy
     const [hasEntered, setHasEntered] = useState(false);
@@ -99,6 +109,21 @@ export default function UniverseCanvas() {
             .catch((err) => console.error("API Error: ", err));
 
         return () => { isMounted = false; };
+    }, []);
+
+    // 1b. Fetch Tag Zones from FastAPI
+    useEffect(() => {
+        fetch("http://127.0.0.1:8000/api/tag-zones")
+            .then((res) => res.json())
+            .then((data) => {
+                const scaled = data.map((z: any) => ({
+                    ...z,
+                    x: z.x * 500,
+                    y: z.y * 500,
+                }));
+                setTagZones(scaled);
+            })
+            .catch((err) => console.error("Tag zones fetch error:", err));
     }, []);
 
     // 2. Responsive Canvas Sizing
@@ -609,6 +634,26 @@ export default function UniverseCanvas() {
         ));
     }, [nodes]);
 
+    // Tag zone labels — rendered at inverse scale so they stay readable at any zoom level.
+    // Opacity peaks when zoomed out and fades as you zoom in close to individual stars.
+    const tagLabelOpacity = Math.min(0.7, Math.max(0, 1.2 - scaleForRender * 0.2));
+    const memoizedTagLabels = useMemo(() => tagZones.map((zone) => (
+        <Text
+            key={`tag-${zone.tag}`}
+            x={zone.x}
+            y={zone.y}
+            text={zone.tag.toUpperCase()}
+            fontSize={60}
+            fontFamily="monospace"
+            fontStyle="bold"
+            fill="rgba(255, 255, 255, 0.9)"
+            offsetX={zone.tag.length * 18}
+            offsetY={30}
+            perfectDrawEnabled={false}
+            listening={false}
+        />
+    )), [tagZones]);
+
     // Edge opacity: brighter when zoomed in, faint when zoomed out
     const edgeOpacity = Math.min(1, Math.max(0.08, 0.25 + (scaleForRender - DEFAULT_ZOOM) * 0.15));
 
@@ -852,6 +897,11 @@ export default function UniverseCanvas() {
                 <Layer listening={false} opacity={edgeOpacity}>
                     {memoizedEdges}
                 </Layer>
+                {tagLabelOpacity > 0.02 && (
+                    <Layer listening={false} opacity={tagLabelOpacity}>
+                        {memoizedTagLabels}
+                    </Layer>
+                )}
                 <Layer>
                     {memoizedNodes}
                 </Layer>

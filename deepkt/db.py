@@ -39,12 +39,15 @@ def _init_tables(conn):
             url             TEXT,
             artist          TEXT NOT NULL,
             title           TEXT NOT NULL,
+            tags            TEXT,
             source          TEXT DEFAULT 'manual',
             status          TEXT DEFAULT 'DISCOVERED',
             error_message   TEXT,
             discovered_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             indexed_at      TIMESTAMP,
-            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            x               REAL,
+            y               REAL
         );
 
         CREATE TABLE IF NOT EXISTS track_features (
@@ -88,6 +91,14 @@ def _init_tables(conn):
         CREATE INDEX IF NOT EXISTS idx_disc_status ON discovery_candidates(status);
         CREATE INDEX IF NOT EXISTS idx_disc_log_candidate ON discovery_log(candidate_url);
     """)
+
+    # Migration: add columns if missing (no-op on fresh databases)
+    for col, coltype in [("tags", "TEXT"), ("x", "REAL"), ("y", "REAL")]:
+        try:
+            conn.execute(f"ALTER TABLE tracks ADD COLUMN {col} {coltype}")
+        except sqlite3.OperationalError:
+            pass
+
     conn.commit()
 
 def save_training_label(conn, anchor_id, candidate_id, label):
@@ -193,6 +204,37 @@ def get_stats(conn):
     stats = {row["status"]: row["count"] for row in rows}
     stats["total"] = sum(stats.values())
     return stats
+
+
+# ============================================================
+# Tag Storage
+# ============================================================
+
+def update_tags(conn, track_id, tags_json):
+    """Store a JSON array of tag strings for a track.
+
+    Args:
+        conn: SQLite connection.
+        track_id: Track ID (matches tracks.id).
+        tags_json: JSON string of tag array, e.g. '["phonk", "drift"]'.
+    """
+    conn.execute(
+        "UPDATE tracks SET tags = ?, updated_at = ? WHERE id = ?",
+        (tags_json, datetime.now().isoformat(), track_id),
+    )
+    conn.commit()
+
+
+def get_all_tags(conn):
+    """Get tags for all INDEXED tracks that have tags.
+
+    Returns:
+        List of dicts: [{track_id, tags}, ...] where tags is a JSON string.
+    """
+    rows = conn.execute(
+        "SELECT id as track_id, tags FROM tracks WHERE status = 'INDEXED' AND tags IS NOT NULL"
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 # ============================================================
