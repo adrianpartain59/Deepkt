@@ -21,6 +21,7 @@ interface TagZone {
 }
 
 const DEFAULT_ZOOM = 5.0;
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 export default function UniverseCanvas() {
     const [nodes, setNodes] = useState<UniverseNode[]>([]);
@@ -74,7 +75,7 @@ export default function UniverseCanvas() {
     // 1. Fetch Universe from FastAPI
     useEffect(() => {
         let isMounted = true;
-        fetch("http://127.0.0.1:8000/api/universe")
+        fetch(`${API_BASE}/api/universe`)
             .then((res) => {
                 if (!res.ok) throw new Error("Failed to fetch universe");
                 return res.json();
@@ -113,7 +114,7 @@ export default function UniverseCanvas() {
 
     // 1b. Fetch Tag Zones from FastAPI
     useEffect(() => {
-        fetch("http://127.0.0.1:8000/api/tag-zones")
+        fetch(`${API_BASE}/api/tag-zones`)
             .then((res) => res.json())
             .then((data) => {
                 const scaled = data.map((z: any) => ({
@@ -353,7 +354,7 @@ export default function UniverseCanvas() {
         }
 
         let isMounted = true;
-        fetch(`http://127.0.0.1:8000/api/neighbors/${encodeURIComponent(displayTrack.id)}`)
+        fetch(`${API_BASE}/api/neighbors/${encodeURIComponent(displayTrack.id)}`)
             .then(res => {
                 if (!res.ok) throw new Error("Failed to fetch neighbors");
                 return res.json();
@@ -384,7 +385,7 @@ export default function UniverseCanvas() {
         initAudioGraph();
         setAudioState('loading');
         audio.pause();
-        audio.src = `http://127.0.0.1:8000/api/audio/${encodeURIComponent(focalTrack.id)}`;
+        audio.src = `${API_BASE}/api/audio/${encodeURIComponent(focalTrack.id)}`;
         audio.load();
         audio.play()
             .then(() => setAutoplayBlocked(false))
