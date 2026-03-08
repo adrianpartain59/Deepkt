@@ -662,6 +662,7 @@ def cmd_map(args):
     generate_umap_map(
         n_neighbors=args.neighbors,
         min_dist=args.min_dist,
+        spread=args.spread,
         metric=args.metric
     )
 
@@ -709,8 +710,9 @@ def main():
 
     # --- map ---
     mp = subparsers.add_parser("map", help="Generate 2D UMAP projection of the music universe")
-    mp.add_argument("--neighbors", type=int, default=15, help="UMAP n_neighbors (default: 15)")
-    mp.add_argument("--min-dist", type=float, default=0.1, help="UMAP min_dist (default: 0.1)")
+    mp.add_argument("--neighbors", type=int, default=500, help="UMAP n_neighbors (default: 500)")
+    mp.add_argument("--min-dist", type=float, default=0.15, help="UMAP min_dist (default: 0.15)")
+    mp.add_argument("--spread", type=float, default=2.0, help="UMAP spread — higher pushes clusters apart (default: 2.0)")
     mp.add_argument("--metric", type=str, default="cosine", help="UMAP metric (default: cosine)")
     mp.set_defaults(func=cmd_map)
 

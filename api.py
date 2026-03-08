@@ -133,6 +133,8 @@ def _build_similarity_index():
         return
 
     mat = np.array(vectors, dtype=np.float32)
+    from deepkt.whitening import apply as whiten
+    mat = np.asarray(whiten(mat), dtype=np.float32)
     norms = np.linalg.norm(mat, axis=1, keepdims=True)
     norms[norms == 0] = 1
     _sim_matrix = mat / norms

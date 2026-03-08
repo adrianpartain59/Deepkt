@@ -309,8 +309,12 @@ def compute_seed_centroid(conn, seed_urls):
     refined_path = 'data/refined_seed_centroid.npy'
     if os.path.exists(refined_path):
         centroid = np.load(refined_path)
-        # Note: We hardcode 380 here as the curated count for logging purposes,
-        # but the real magic is the refined vector itself.
+        # Whiten and re-normalize to match the whitened embedding space
+        from deepkt.whitening import apply as whiten
+        centroid = np.array(whiten(centroid.tolist()), dtype=np.float32)
+        norm = np.linalg.norm(centroid)
+        if norm > 0:
+            centroid = centroid / norm
         return centroid, 380
 
     if not seed_urls:
@@ -387,6 +391,10 @@ def similarity_gate(probe_vectors, probe_urls, candidate_url, conn, threshold=0.
     if centroid_normed is None:
         console.print("      [bold yellow]Warning: No indexed tracks in corpus. Cannot gate.[/bold yellow]")
         return 0.0, False
+
+    # Probe vectors come from analyze_snippet (raw); whiten to match the centroid space
+    from deepkt.whitening import apply as whiten
+    probe_vectors = [whiten(v) for v in probe_vectors]
 
     similarities = []
 

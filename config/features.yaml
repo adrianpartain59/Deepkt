@@ -9,11 +9,11 @@
 #
 # Increment `version` when changing which features are enabled.
 
-version: 5
+version: 6
 
 features:
   clap_embedding:
     enabled: true
     weight: 1.0
     dimensions: 512
-    description: "LAION-CLAP 512-d Semantic Audio Embedding"
+    description: "LAION-CLAP Music 512-d Semantic Audio Embedding"

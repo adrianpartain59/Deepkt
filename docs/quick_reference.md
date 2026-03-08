@@ -2,7 +2,9 @@
 
 ## Run the App
 ```bash
-.venv/bin/python3.12 -m streamlit run app.py
+.venv/bin/python3.12 -m streamlit run app.py                 # Streamlit UI
+.venv/bin/python3.12 api.py                                  # FastAPI backend (port 8000)
+cd web && npm run dev                                        # Next.js frontend (port 3000)
 ```
 
 ## CLI Commands
@@ -39,8 +41,15 @@
 
 ### Analysis & Indexing
 ```bash
-.venv/bin/python3.12 cli.py reindex                          # Rebuild ChromaDB search index
+.venv/bin/python3.12 cli.py reindex                          # Rebuild ChromaDB search index (auto-fits whitening)
 .venv/bin/python3.12 cli.py optimize                         # Find optimal feature weights for matching artists
+```
+
+### 2D Map (UMAP)
+```bash
+.venv/bin/python3.12 cli.py map                              # Generate 2D map (default params)
+.venv/bin/python3.12 cli.py map --neighbors 200 --min-dist 0.15  # Global structure (subgenre separation)
+.venv/bin/python3.12 cli.py map --neighbors 15 --min-dist 0.05   # Local fidelity (tight neighborhoods)
 ```
 
 ### Search & Discovery

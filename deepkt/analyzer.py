@@ -1,7 +1,7 @@
 """
 Analyzer — Neural Network feature extraction engine.
 
-Extracts semantic audio embeddings using LAION-CLAP (Contrastive Language-Audio Pretraining).
+Extracts semantic audio embeddings using LAION-CLAP Music (trained on music data).
 Returns a single 512-dimensional vector that represents the Sonic DNA of the track.
 """
 
@@ -31,8 +31,8 @@ def _setup_model():
     
     print(f"Loading LAION-CLAP Neural Network to {_device}...")
     try:
-        _processor = ClapProcessor.from_pretrained("laion/clap-htsat-unfused")
-        _model = ClapModel.from_pretrained("laion/clap-htsat-unfused").to(_device)
+        _processor = ClapProcessor.from_pretrained("laion/larger_clap_music")
+        _model = ClapModel.from_pretrained("laion/larger_clap_music").to(_device)
         _model.eval()
         return True
     except Exception as e:
@@ -86,12 +86,14 @@ def analyze_snippet(file_path, config_path=None):
 
 
 def build_search_vector(feature_dict, config_path=None, weights_override=None):
-    """Extract the embedding for ChromaDB. Weights are obsolete for Neural Networks.
+    """Extract the embedding for search, with whitening applied if fitted.
 
     Returns:
-        List of floats — the 512-d search vector.
+        List of floats — the 512-d search vector (whitened if transform exists).
     """
-    return feature_dict.get("clap_embedding", [0.0] * 512)
+    raw = feature_dict.get("clap_embedding", [0.0] * 512)
+    from deepkt.whitening import apply as whiten
+    return whiten(raw)
 
 
 def get_full_feature_names():

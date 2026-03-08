@@ -103,9 +103,10 @@ def analyze_and_store(data_dir=DEFAULT_DATA_DIR, db_path=DEFAULT_DB_PATH):
 def rebuild_search_index(db_path=DEFAULT_DB_PATH, db_dir=DEFAULT_DB_DIR):
     """Rebuild ChromaDB search index from stored features in SQLite.
 
-    This is the cheap operation — just reads feature dicts from SQLite,
-    selects the enabled subset, and inserts into ChromaDB. Takes minutes
-    even for 1M tracks.
+    Automatically fits a mean-centering + PCA whitening transform from
+    the full corpus and applies it to all embeddings before indexing.
+    The transform is saved to data/whitening_transform.npz for use at
+    query time. Raw embeddings in SQLite are never modified.
 
     Args:
         db_path: Path to SQLite database.
@@ -114,6 +115,13 @@ def rebuild_search_index(db_path=DEFAULT_DB_PATH, db_dir=DEFAULT_DB_DIR):
     Returns:
         ChromaDB Collection with the new search index.
     """
+    from deepkt import whitening
+
+    # Invalidate any cached whitening so we read raw embeddings below
+    whitening.clear_cache()
+    if os.path.exists(whitening.DEFAULT_TRANSFORM_PATH):
+        os.remove(whitening.DEFAULT_TRANSFORM_PATH)
+
     conn = trackdb.get_db(db_path)
 
     # Wipe and recreate the collection
@@ -137,37 +145,48 @@ def rebuild_search_index(db_path=DEFAULT_DB_PATH, db_dir=DEFAULT_DB_DIR):
     print(f"Enabled features: {', '.join(enabled)} ({search_dims} dims)")
     print(f"Feature version: {version}\n")
 
-    # Batch insert for performance
-    batch_ids = []
-    batch_embeddings = []
-    batch_metadatas = []
-    batch_size = 100
+    # Phase 1: collect raw embeddings (whitening is cleared, so build_search_vector returns raw)
+    raw_ids = []
+    raw_vectors = []
+    raw_metadatas = []
     skipped = 0
 
     for track in all_features:
-        search_vector = build_search_vector(track["feature_data"])
+        raw_vec = build_search_vector(track["feature_data"])
 
-        if len(search_vector) != search_dims:
-            print(f"  [SKIP] {track['track_id']} — dimension mismatch ({len(search_vector)} vs {search_dims})")
+        if len(raw_vec) != search_dims:
+            print(f"  [SKIP] {track['track_id']} — dimension mismatch ({len(raw_vec)} vs {search_dims})")
             skipped += 1
             continue
 
-        batch_ids.append(track["track_id"])
-        batch_embeddings.append(search_vector)
-        batch_metadatas.append({
+        raw_ids.append(track["track_id"])
+        raw_vectors.append(raw_vec)
+        raw_metadatas.append({
             "artist": track["artist"],
             "title": track["title"],
             "filename": track["track_id"],
             "url": track.get("url", ""),
         })
 
-        if len(batch_ids) >= batch_size:
-            collection.add(ids=batch_ids, embeddings=batch_embeddings, metadatas=batch_metadatas)
-            batch_ids, batch_embeddings, batch_metadatas = [], [], []
+    # Phase 2: fit whitening transform from the full corpus
+    if len(raw_vectors) >= 20:
+        print(f"Fitting whitening transform on {len(raw_vectors)} embeddings...")
+        whitening.fit_and_save(raw_vectors)
+        print("Whitening transform fitted and saved.\n")
+    else:
+        print(f"Skipping whitening: need >= 20 tracks (have {len(raw_vectors)}).\n")
 
-    # Insert remaining
-    if batch_ids:
-        collection.add(ids=batch_ids, embeddings=batch_embeddings, metadatas=batch_metadatas)
+    # Phase 3: apply whitening and batch-insert into ChromaDB
+    whitened = whitening.apply(raw_vectors) if raw_vectors else []
+
+    batch_size = 100
+    for start in range(0, len(raw_ids), batch_size):
+        end = min(start + batch_size, len(raw_ids))
+        collection.add(
+            ids=raw_ids[start:end],
+            embeddings=whitened[start:end],
+            metadatas=raw_metadatas[start:end],
+        )
 
     total = collection.count()
     print(f"Done! Search index built with {total} tracks ({search_dims} dims)")
