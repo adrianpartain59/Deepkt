@@ -3,6 +3,7 @@ import os
 import statistics
 from collections import defaultdict
 
+import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -11,7 +12,6 @@ from typing import List, Optional
 
 from deepkt import db as trackdb
 from deepkt.downloader import download_single
-from deepkt.indexer import get_collection
 
 app = FastAPI(title="HyperPhonk API")
 
@@ -100,51 +100,79 @@ class SimilarTrack(BaseModel):
     url: Optional[str] = None
     match_pct: float
 
+# In-memory cosine similarity index built from SQLite track_features.
+# Avoids needing ChromaDB (and its heavy dependency chain) in production.
+_sim_matrix: Optional[np.ndarray] = None
+_sim_ids: Optional[list] = None
+_sim_id_to_idx: Optional[dict] = None
+
+def _build_similarity_index():
+    global _sim_matrix, _sim_ids, _sim_id_to_idx
+    if _sim_matrix is not None:
+        return
+
+    conn = trackdb.get_db()
+    rows = conn.execute('''
+        SELECT tf.track_id, tf.feature_data
+        FROM track_features tf
+        JOIN tracks t ON tf.track_id = t.id
+        WHERE t.x IS NOT NULL AND t.status IN ('DOWNLOADED', 'INDEXED')
+    ''').fetchall()
+    conn.close()
+
+    ids = []
+    vectors = []
+    for row in rows:
+        features = json.loads(row[1])
+        embedding = features.get("clap_embedding")
+        if embedding and len(embedding) == 512:
+            ids.append(row[0])
+            vectors.append(embedding)
+
+    if not vectors:
+        return
+
+    mat = np.array(vectors, dtype=np.float32)
+    norms = np.linalg.norm(mat, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+    _sim_matrix = mat / norms
+    _sim_ids = ids
+    _sim_id_to_idx = {tid: i for i, tid in enumerate(ids)}
+
 @app.get("/api/neighbors/{track_id}", response_model=List[SimilarTrack])
 def get_neighbors(track_id: str):
     """
     Returns the 10 most sonically similar tracks using cosine similarity
     on the full 512-dimensional CLAP embeddings (pre-UMAP).
     """
-    collection = get_collection()
-    if collection.count() == 0:
-        return []
+    _build_similarity_index()
 
-    # Retrieve the query track's embedding from ChromaDB
-    result = collection.get(ids=[track_id], include=["embeddings"])
-    if len(result["ids"]) == 0 or result["embeddings"] is None or len(result["embeddings"]) == 0:
+    if _sim_matrix is None or track_id not in _sim_id_to_idx:
         raise HTTPException(status_code=404, detail="Track embedding not found")
 
-    query_embedding = result["embeddings"][0]
+    idx = _sim_id_to_idx[track_id]
+    similarities = _sim_matrix @ _sim_matrix[idx]
+    top_indices = np.argsort(similarities)[::-1][:11]
 
-    # Query ChromaDB for the most similar tracks (cosine distance)
-    similar = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=11,  # +1 to account for self-match
-    )
-
-    # Look up (x, y) coordinates from SQLite for map navigation
     conn = trackdb.get_db()
     results = []
-    for sid, distance, meta in zip(
-        similar["ids"][0], similar["distances"][0], similar["metadatas"][0]
-    ):
+    for i in top_indices:
+        sid = _sim_ids[i]
         if sid == track_id:
             continue
         row = conn.execute(
-            'SELECT x, y FROM tracks WHERE id = ?', (sid,)
+            'SELECT artist, title, x, y, url FROM tracks WHERE id = ?', (sid,)
         ).fetchone()
-        if not row or row[0] is None:
+        if not row or row[2] is None:
             continue
-        similarity = 1 - distance
         results.append({
             "id": sid,
-            "artist": meta.get("artist", ""),
-            "title": meta.get("title", ""),
-            "x": row[0],
-            "y": row[1],
-            "url": meta.get("url", ""),
-            "match_pct": round(similarity * 100, 1),
+            "artist": row[0] or "",
+            "title": row[1] or "",
+            "x": row[2],
+            "y": row[3],
+            "url": row[4] or "",
+            "match_pct": round(float(similarities[i]) * 100, 1),
         })
 
     conn.close()
