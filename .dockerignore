@@ -3,6 +3,8 @@ __pycache__/
 data/
 .git/
 node_modules/
-web/.next/
+web/
+static_site/
+lazzy_all.json
 *.log
 .DS_Store
