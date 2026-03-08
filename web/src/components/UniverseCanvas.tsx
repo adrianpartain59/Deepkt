@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { Stage, Layer, Circle, Group, Line, Text } from "react-konva";
-import { FaSoundcloud, FaChevronLeft, FaChevronRight, FaPause, FaPlay } from "react-icons/fa";
+import { FaSoundcloud, FaChevronLeft, FaChevronRight, FaPause, FaPlay, FaHeart } from "react-icons/fa";
 
 interface UniverseNode {
     id: string;
@@ -45,6 +45,24 @@ export default function UniverseCanvas() {
     // Sidebar State
     const [neighbors, setNeighbors] = useState<{ id: string, artist: string, title: string, x: number, y: number, url?: string, match_pct?: number }[]>([]);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+    // Liked Tracks (persisted to localStorage)
+    const [likedTracks, setLikedTracks] = useState<Set<string>>(() => {
+        if (typeof window === 'undefined') return new Set();
+        try {
+            const stored = localStorage.getItem('ambis-liked-tracks');
+            return stored ? new Set(JSON.parse(stored)) : new Set();
+        } catch { return new Set(); }
+    });
+    const toggleLike = useCallback((trackId: string) => {
+        setLikedTracks(prev => {
+            const next = new Set(prev);
+            if (next.has(trackId)) next.delete(trackId);
+            else next.add(trackId);
+            localStorage.setItem('ambis-liked-tracks', JSON.stringify([...next]));
+            return next;
+        });
+    }, []);
 
     // Audio Player State
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -590,64 +608,78 @@ export default function UniverseCanvas() {
     // Uses a square root curve so the scale grows gently rather than linearly.
     const nodeScale = Math.max(1.0, Math.sqrt(1.5 / scaleForRender));
 
-    const memoizedNodes = useMemo(() => visibleNodes.map((node) => (
-        <Group
-            key={node.id}
-            id={'node-' + node.id}
-            x={node.x}
-            y={node.y}
-            scaleX={nodeScale}
-            scaleY={nodeScale}
-            onMouseEnter={nodeListening ? (e) => {
-                const container = e.target.getStage()?.container();
-                if (container) container.style.cursor = 'crosshair';
-            } : undefined}
-            onMouseLeave={nodeListening ? (e) => {
-                const container = e.target.getStage()?.container();
-                if (container) container.style.cursor = 'grab';
-            } : undefined}
-            onClick={nodeListening ? () => jumpToNode(node) : undefined}
-        >
-            {showBloom && (
+    const memoizedNodes = useMemo(() => visibleNodes.map((node) => {
+        const liked = likedTracks.has(node.id);
+        const s = liked ? nodeScale * 4 : nodeScale;
+        return (
+            <Group
+                key={node.id}
+                id={'node-' + node.id}
+                x={node.x}
+                y={node.y}
+                scaleX={s}
+                scaleY={s}
+                onMouseEnter={nodeListening ? (e) => {
+                    const container = e.target.getStage()?.container();
+                    if (container) container.style.cursor = 'crosshair';
+                } : undefined}
+                onMouseLeave={nodeListening ? (e) => {
+                    const container = e.target.getStage()?.container();
+                    if (container) container.style.cursor = 'grab';
+                } : undefined}
+                onClick={nodeListening ? () => jumpToNode(node) : undefined}
+            >
+                {showBloom && (
+                    <Circle
+                        radius={6}
+                        fillRadialGradientStartPoint={{ x: 0, y: 0 }}
+                        fillRadialGradientStartRadius={0}
+                        fillRadialGradientEndPoint={{ x: 0, y: 0 }}
+                        fillRadialGradientEndRadius={6}
+                        fillRadialGradientColorStops={liked ? [
+                            0, 'rgba(255, 45, 117, 0.5)',
+                            0.4, 'rgba(255, 45, 117, 0.15)',
+                            1, 'rgba(255, 45, 117, 0)'
+                        ] : [
+                            0, 'rgba(255, 255, 255, 0.35)',
+                            0.4, 'rgba(255, 255, 255, 0.1)',
+                            1, 'rgba(255, 255, 255, 0)'
+                        ]}
+                        perfectDrawEnabled={false}
+                        listening={nodeListening}
+                        hitFunc={nodeListening ? (context, shape) => {
+                            context.beginPath();
+                            context.arc(0, 0, 7, 0, Math.PI * 2, true);
+                            context.closePath();
+                            context.fillStrokeShape(shape);
+                        } : undefined}
+                    />
+                )}
                 <Circle
-                    radius={6}
+                    radius={0.8}
                     fillRadialGradientStartPoint={{ x: 0, y: 0 }}
                     fillRadialGradientStartRadius={0}
                     fillRadialGradientEndPoint={{ x: 0, y: 0 }}
-                    fillRadialGradientEndRadius={6}
-                    fillRadialGradientColorStops={[
-                        0, 'rgba(255, 255, 255, 0.35)',
-                        0.4, 'rgba(255, 255, 255, 0.1)',
+                    fillRadialGradientEndRadius={0.8}
+                    fillRadialGradientColorStops={liked ? [
+                        0, '#ffffff',
+                        0.4, '#ff7aa8',
+                        0.7, 'rgba(255, 45, 117, 0.9)',
+                        0.9, 'rgba(255, 45, 117, 0.6)',
+                        1, 'rgba(255, 45, 117, 0)'
+                    ] : [
+                        0, '#ffffff',
+                        0.4, '#ffffff',
+                        0.7, 'rgba(255, 255, 255, 0.8)',
+                        0.9, 'rgba(255, 255, 255, 0.5)',
                         1, 'rgba(255, 255, 255, 0)'
                     ]}
                     perfectDrawEnabled={false}
-                    listening={nodeListening}
-                    hitFunc={nodeListening ? (context, shape) => {
-                        context.beginPath();
-                        context.arc(0, 0, 7, 0, Math.PI * 2, true);
-                        context.closePath();
-                        context.fillStrokeShape(shape);
-                    } : undefined}
+                    listening={false}
                 />
-            )}
-            <Circle
-                radius={0.8}
-                fillRadialGradientStartPoint={{ x: 0, y: 0 }}
-                fillRadialGradientStartRadius={0}
-                fillRadialGradientEndPoint={{ x: 0, y: 0 }}
-                fillRadialGradientEndRadius={0.8}
-                fillRadialGradientColorStops={[
-                    0, '#ffffff',
-                    0.4, '#ffffff',
-                    0.7, 'rgba(255, 255, 255, 0.8)',
-                    0.9, 'rgba(255, 255, 255, 0.5)',
-                    1, 'rgba(255, 255, 255, 0)'
-                ]}
-                perfectDrawEnabled={false}
-                listening={false}
-            />
-        </Group>
-    )), [visibleNodes, showBloom, nodeListening, nodeScale]);
+            </Group>
+        );
+    }), [visibleNodes, showBloom, nodeListening, nodeScale, likedTracks]);
 
     // Precompute nearest-neighbor edges using a grid spatial index (O(n*k) instead of O(n²))
     const memoizedEdges = useMemo(() => {
@@ -773,10 +805,10 @@ export default function UniverseCanvas() {
 
             {/* Top Left: AMBIS Title */}
             <div className="absolute top-6 left-6 z-10 pointer-events-none">
-                <h1 className="text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider title-glow">
+                <h1 className="text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider title-glow">
                     AMBIS
                 </h1>
-                <p className="text-xs text-zinc-500 font-mono mt-1">
+                <p className="text-m text-zinc-500 font-mono mt-1">
                     {nodes.length > 0 ? `${nodes.length} nodes active` : 'Initializing Map...'}
                 </p>
             </div>
@@ -785,6 +817,16 @@ export default function UniverseCanvas() {
             {focalTrack && (
                 <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10">
                     <div className="bg-black/80 backdrop-blur-md border border-[#e040fb]/30 px-5 py-3 rounded-xl flex items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-300 max-w-[28rem] shadow-[0_0_25px_rgba(224,64,251,0.2)] pointer-events-auto">
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                toggleLike(focalTrack.id);
+                            }}
+                            className={`shrink-0 p-1 transition-colors ${likedTracks.has(focalTrack.id) ? 'text-[#ff2d75]' : 'text-zinc-500 hover:text-[#ff2d75]'}`}
+                            title={likedTracks.has(focalTrack.id) ? "Unlike" : "Like"}
+                        >
+                            <FaHeart size={20} />
+                        </button>
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();
@@ -1000,60 +1042,73 @@ export default function UniverseCanvas() {
 
                 {/* Separate Layer exclusively for the active Supernova track to guarantee shadow rendering */}
                 <Layer>
-                    {focalTrack && (
-                        <Group x={focalTrack.x} y={focalTrack.y} listening={false}
-                            ref={(node) => {
-                                focalGroupRef.current = node;
-                                if (node && prevFocalIdRef.current !== focalTrack.id) {
-                                    prevFocalIdRef.current = focalTrack.id;
-                                    const focalZoom = Math.max(1.0, Math.sqrt(8.0 / viewRef.current.scale));
-                                    node.scale({ x: 0.3 * focalZoom, y: 0.3 * focalZoom });
-                                    import('konva').then((Konva) => {
-                                        if (!node || !node.getLayer()) return;
+                    {focalTrack && (() => {
+                        const focalLiked = likedTracks.has(focalTrack.id);
+                        return (
+                            <Group x={focalTrack.x} y={focalTrack.y} listening={false}
+                                ref={(node) => {
+                                    focalGroupRef.current = node;
+                                    if (node && prevFocalIdRef.current !== focalTrack.id) {
+                                        prevFocalIdRef.current = focalTrack.id;
+                                        const focalZoom = Math.max(1.0, Math.sqrt(8.0 / viewRef.current.scale));
+                                        node.scale({ x: 0.3 * focalZoom, y: 0.3 * focalZoom });
+                                        import('konva').then((Konva) => {
+                                            if (!node || !node.getLayer()) return;
 
-                                        new Konva.default.Tween({
-                                            node: node,
-                                            scaleX: focalZoom,
-                                            scaleY: focalZoom,
-                                            easing: Konva.default.Easings.ElasticEaseOut,
-                                            duration: 0.6,
-                                        }).play();
-                                    });
-                                }
-                            }}
-                        >
-                            {/* Bloom/Glow */}
-                            <Circle
-                                radius={6}
-                                fillRadialGradientStartPoint={{ x: 0, y: 0 }}
-                                fillRadialGradientStartRadius={1}
-                                fillRadialGradientEndPoint={{ x: 0, y: 0 }}
-                                fillRadialGradientEndRadius={6}
-                                fillRadialGradientColorStops={[
-                                    0, 'rgba(0, 229, 255, 0.8)',
-                                    0.4, 'rgba(0, 229, 255, 0.3)',
-                                    1, 'rgba(0, 229, 255, 0)'
-                                ]}
-                                perfectDrawEnabled={false}
-                            />
-                            {/* Core */}
-                            <Circle
-                                radius={1.5}
-                                fillRadialGradientStartPoint={{ x: 0, y: 0 }}
-                                fillRadialGradientStartRadius={0}
-                                fillRadialGradientEndPoint={{ x: 0, y: 0 }}
-                                fillRadialGradientEndRadius={1.5}
-                                fillRadialGradientColorStops={[
-                                    0, '#ffffff',
-                                    0.4, '#ffffff',
-                                    0.7, 'rgba(150, 240, 255, 0.9)',
-                                    0.9, 'rgba(0, 229, 255, 0.8)',
-                                    1, 'rgba(0, 229, 255, 0)'
-                                ]}
-                                perfectDrawEnabled={false}
-                            />
-                        </Group>
-                    )}
+                                            new Konva.default.Tween({
+                                                node: node,
+                                                scaleX: focalZoom,
+                                                scaleY: focalZoom,
+                                                easing: Konva.default.Easings.ElasticEaseOut,
+                                                duration: 0.6,
+                                            }).play();
+                                        });
+                                    }
+                                }}
+                            >
+                                {/* Bloom/Glow */}
+                                <Circle
+                                    radius={6}
+                                    fillRadialGradientStartPoint={{ x: 0, y: 0 }}
+                                    fillRadialGradientStartRadius={1}
+                                    fillRadialGradientEndPoint={{ x: 0, y: 0 }}
+                                    fillRadialGradientEndRadius={6}
+                                    fillRadialGradientColorStops={focalLiked ? [
+                                        0, 'rgba(255, 45, 117, 0.9)',
+                                        0.4, 'rgba(255, 45, 117, 0.35)',
+                                        1, 'rgba(255, 45, 117, 0)'
+                                    ] : [
+                                        0, 'rgba(0, 229, 255, 0.8)',
+                                        0.4, 'rgba(0, 229, 255, 0.3)',
+                                        1, 'rgba(0, 229, 255, 0)'
+                                    ]}
+                                    perfectDrawEnabled={false}
+                                />
+                                {/* Core */}
+                                <Circle
+                                    radius={1.5}
+                                    fillRadialGradientStartPoint={{ x: 0, y: 0 }}
+                                    fillRadialGradientStartRadius={0}
+                                    fillRadialGradientEndPoint={{ x: 0, y: 0 }}
+                                    fillRadialGradientEndRadius={1.5}
+                                    fillRadialGradientColorStops={focalLiked ? [
+                                        0, '#ffffff',
+                                        0.4, '#ff7aa8',
+                                        0.7, 'rgba(255, 45, 117, 0.9)',
+                                        0.9, 'rgba(255, 45, 117, 0.8)',
+                                        1, 'rgba(255, 45, 117, 0)'
+                                    ] : [
+                                        0, '#ffffff',
+                                        0.4, '#ffffff',
+                                        0.7, 'rgba(150, 240, 255, 0.9)',
+                                        0.9, 'rgba(0, 229, 255, 0.8)',
+                                        1, 'rgba(0, 229, 255, 0)'
+                                    ]}
+                                    perfectDrawEnabled={false}
+                                />
+                            </Group>
+                        );
+                    })()}
                 </Layer>
             </Stage>
         </div>
