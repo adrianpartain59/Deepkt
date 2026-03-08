@@ -1,8 +1,44 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo, useCallback } from "react";
+import React, { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { Stage, Layer, Circle, Group, Line, Text } from "react-konva";
-import { FaSoundcloud, FaChevronLeft, FaChevronRight, FaPause, FaPlay, FaHeart } from "react-icons/fa";
+import { FaSoundcloud, FaSpotify, FaApple, FaYoutube, FaChevronLeft, FaChevronRight, FaPause, FaPlay, FaHeart, FaChevronDown } from "react-icons/fa";
+
+type PlatformKey = "soundcloud" | "spotify" | "apple_music" | "youtube_music";
+
+const PLATFORMS: Record<PlatformKey, {
+    label: string;
+    icon: React.ComponentType<{ size?: number }>;
+    color: string;
+    buildUrl: (track: { artist: string; title: string; url?: string }) => string;
+}> = {
+    soundcloud: {
+        label: "SoundCloud",
+        icon: FaSoundcloud,
+        color: "#ff5500",
+        buildUrl: (t) => t.url || `https://soundcloud.com/search?q=${encodeURIComponent(t.artist + " " + t.title)}`,
+    },
+    spotify: {
+        label: "Spotify",
+        icon: FaSpotify,
+        color: "#1DB954",
+        buildUrl: (t) => `https://open.spotify.com/search/${encodeURIComponent(t.artist + " " + t.title)}`,
+    },
+    apple_music: {
+        label: "Apple Music",
+        icon: FaApple,
+        color: "#FA243C",
+        buildUrl: (t) => `https://music.apple.com/us/search?term=${encodeURIComponent(t.artist + " " + t.title)}`,
+    },
+    youtube_music: {
+        label: "YouTube Music",
+        icon: FaYoutube,
+        color: "#FF0000",
+        buildUrl: (t) => `https://music.youtube.com/search?q=${encodeURIComponent(t.artist + " " + t.title)}`,
+    },
+};
+
+const PLATFORM_KEYS: PlatformKey[] = ["soundcloud", "spotify", "apple_music", "youtube_music"];
 
 interface UniverseNode {
     id: string;
@@ -47,23 +83,46 @@ export default function UniverseCanvas() {
     const [neighbors, setNeighbors] = useState<{ id: string, artist: string, title: string, x: number, y: number, url?: string, match_pct?: number }[]>([]);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-    // Liked Tracks (persisted to localStorage)
-    const [likedTracks, setLikedTracks] = useState<Set<string>>(() => {
-        if (typeof window === 'undefined') return new Set();
+    // Liked Tracks (persisted to localStorage, ordered most-recent-first)
+    const [likedTrackIds, setLikedTrackIds] = useState<string[]>(() => {
+        if (typeof window === 'undefined') return [];
         try {
             const stored = localStorage.getItem('ambis-liked-tracks');
-            return stored ? new Set(JSON.parse(stored)) : new Set();
-        } catch { return new Set(); }
+            return stored ? JSON.parse(stored) : [];
+        } catch { return []; }
     });
+    const likedSet = useMemo(() => new Set(likedTrackIds), [likedTrackIds]);
     const toggleLike = useCallback((trackId: string) => {
-        setLikedTracks(prev => {
-            const next = new Set(prev);
-            if (next.has(trackId)) next.delete(trackId);
-            else next.add(trackId);
-            localStorage.setItem('ambis-liked-tracks', JSON.stringify([...next]));
+        setLikedTrackIds(prev => {
+            const next = prev.includes(trackId)
+                ? prev.filter(id => id !== trackId)
+                : [trackId, ...prev.filter(id => id !== trackId)];
+            localStorage.setItem('ambis-liked-tracks', JSON.stringify(next));
             return next;
         });
     }, []);
+
+    // Sidebar tab: 'similar' | 'liked'
+    const [sidebarTab, setSidebarTab] = useState<'similar' | 'liked'>('similar');
+
+    // Platform switcher
+    const [platform, setPlatform] = useState<PlatformKey>(() => {
+        if (typeof window === 'undefined') return 'soundcloud';
+        return (localStorage.getItem('preferred_platform') as PlatformKey) || 'soundcloud';
+    });
+    const [platformOpen, setPlatformOpen] = useState(false);
+    useEffect(() => { localStorage.setItem('preferred_platform', platform); }, [platform]);
+    const platformDropdownRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!platformOpen) return;
+        const handleClickOutside = (e: MouseEvent) => {
+            if (platformDropdownRef.current && !platformDropdownRef.current.contains(e.target as Node)) {
+                setPlatformOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [platformOpen]);
 
     // Audio Player State
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -485,6 +544,25 @@ export default function UniverseCanvas() {
             });
     }, [focalTrack?.id, hasEntered, isInteracting]);
 
+    // Spacebar toggles play/pause globally (skip when typing in an input)
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.code !== 'Space') return;
+            const tag = (e.target as HTMLElement)?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+            e.preventDefault();
+            const audio = audioRef.current;
+            if (!audio) return;
+            if (audioState === 'playing') {
+                audio.pause();
+            } else {
+                audio.play().catch(() => {});
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [audioState]);
+
     // 7. Oscilloscope waveform drawing loop — only runs when audio is playing, throttled to 30fps
     useEffect(() => {
         if (audioState !== 'playing') {
@@ -644,7 +722,7 @@ export default function UniverseCanvas() {
     const nodeScale = Math.max(1.0, Math.sqrt(1.5 / scaleForRender));
 
     const memoizedNodes = useMemo(() => visibleNodes.map((node) => {
-        const liked = likedTracks.has(node.id);
+        const liked = likedSet.has(node.id);
         const s = liked ? nodeScale * 4 : nodeScale;
         return (
             <Group
@@ -714,7 +792,7 @@ export default function UniverseCanvas() {
                 />
             </Group>
         );
-    }), [visibleNodes, showBloom, nodeListening, nodeScale, likedTracks]);
+    }), [visibleNodes, showBloom, nodeListening, nodeScale, likedSet]);
 
     // Precompute nearest-neighbor edges using a grid spatial index (O(n*k) instead of O(n²))
     const memoizedEdges = useMemo(() => {
@@ -850,15 +928,15 @@ export default function UniverseCanvas() {
 
             {/* Top Center: Focal Track HUD */}
             {focalTrack && (
-                <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10">
-                    <div className="bg-black/80 backdrop-blur-md border border-[#e040fb]/30 px-5 py-3 rounded-xl flex items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-300 max-w-[28rem] shadow-[0_0_25px_rgba(224,64,251,0.2)] pointer-events-auto">
+                <div className="absolute top-6 left-1/2 -translate-x-1/2 z-40">
+                    <div className="bg-black/80 backdrop-blur-md border border-[#e040fb]/30 px-5 py-3 rounded-xl flex items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-300 max-w-[30rem] shadow-[0_0_25px_rgba(224,64,251,0.2)] pointer-events-auto">
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();
                                 toggleLike(focalTrack.id);
                             }}
-                            className={`shrink-0 p-1 transition-colors ${likedTracks.has(focalTrack.id) ? 'text-[#ff2d75]' : 'text-zinc-500 hover:text-[#ff2d75]'}`}
-                            title={likedTracks.has(focalTrack.id) ? "Unlike" : "Like"}
+                            className={`shrink-0 p-1 transition-colors ${likedSet.has(focalTrack.id) ? 'text-[#ff2d75]' : 'text-zinc-500 hover:text-[#ff2d75]'}`}
+                            title={likedSet.has(focalTrack.id) ? "Unlike" : "Like"}
                         >
                             <FaHeart size={20} />
                         </button>
@@ -896,18 +974,18 @@ export default function UniverseCanvas() {
                                 className="shrink-0 opacity-80"
                             />
                         )}
-                        {focalTrack.url && (
-                            <a
-                                href={focalTrack.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-zinc-500 hover:text-[#ff7700] transition-colors shrink-0 p-1"
-                                title="Open on SoundCloud"
-                            >
-                                <FaSoundcloud size={22} />
-                            </a>
-                        )}
+                        <a
+                            href={PLATFORMS[platform].buildUrl(focalTrack)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-zinc-500 transition-colors shrink-0 p-1"
+                            title={`Open on ${PLATFORMS[platform].label}`}
+                            onMouseEnter={(e) => (e.currentTarget.style.color = PLATFORMS[platform].color)}
+                            onMouseLeave={(e) => (e.currentTarget.style.color = '')}
+                        >
+                            {React.createElement(PLATFORMS[platform].icon, { size: 22 })}
+                        </a>
                     </div>
                 </div>
             )}
@@ -920,60 +998,96 @@ export default function UniverseCanvas() {
                 </div>
             )}
 
-            {/* Top Right: Search Bar */}
-            <div className="absolute top-6 right-10 z-30 w-80">
-                <form onSubmit={handleSearch} className="relative">
-                    <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search artist or title..."
-                        className="w-full bg-black/80 backdrop-blur-md border border-white/20 rounded-full py-3 px-5 text-sm font-mono text-white placeholder-zinc-500 focus:outline-none focus:border-[#00e5ff] focus:ring-1 focus:ring-[#00e5ff] transition-all"
-                    />
+            {/* Top Right: Platform Switcher + Search Bar */}
+            <div className="absolute top-6 right-10 z-30 flex items-start gap-2">
+                {/* Platform Switcher */}
+                <div ref={platformDropdownRef} className="relative">
                     <button
                         type="button"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            if (nodesRef.current.length === 0) return;
-                            const randomNode = nodesRef.current[Math.floor(Math.random() * nodesRef.current.length)];
-                            jumpToNode(randomNode);
-                            setSearchResults([]);
-                            setSearchQuery("");
-                        }}
-                        className="absolute right-2 top-2 bottom-2 px-4 rounded-full bg-white/10 hover:bg-white/20 text-xs font-bold transition-colors"
+                        onClick={(e) => { e.stopPropagation(); setPlatformOpen(prev => !prev); }}
+                        className="flex items-center justify-center gap-1.5 bg-black/80 backdrop-blur-md border border-white/20 rounded-full px-4 transition-all hover:border-white/40 h-[46px]"
+                        title={`Listening on ${PLATFORMS[platform].label}`}
                     >
-                        RANDOM
+                        <span style={{ color: PLATFORMS[platform].color }}>{React.createElement(PLATFORMS[platform].icon, { size: 16 })}</span>
+                        <FaChevronDown size={10} className={`text-zinc-500 transition-transform ${platformOpen ? 'rotate-180' : ''}`} />
                     </button>
-                </form>
+                    {platformOpen && (
+                        <div className="absolute top-full mt-2 left-0 w-48 bg-black/90 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl">
+                            {PLATFORM_KEYS.map((key) => {
+                                const p = PLATFORMS[key];
+                                const active = key === platform;
+                                return (
+                                    <button
+                                        key={key}
+                                        onClick={(e) => { e.stopPropagation(); setPlatform(key); setPlatformOpen(false); }}
+                                        className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-mono transition-colors ${active ? 'bg-white/10 text-white' : 'text-zinc-400 hover:bg-white/5 hover:text-white'}`}
+                                    >
+                                        <span style={{ color: active ? p.color : undefined }}>
+                                            {React.createElement(p.icon, { size: 18 })}
+                                        </span>
+                                        {p.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
 
-                {searchResults.length > 0 && (
-                    <div className="mt-2 bg-black/90 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl max-h-[70vh] overflow-y-auto">
-                        {searchResults.map((result, i) => (
-                            <div
-                                key={result.id + i}
-                                onClick={() => {
-                                    jumpToNode(result as UniverseNode);
-                                    setSearchResults([]);
-                                    setSearchQuery("");
-                                }}
-                                className="p-3 border-b border-white/5 hover:bg-white/10 cursor-pointer transition-colors group"
-                            >
-                                <p className="text-sm font-bold text-white group-hover:text-[#00e5ff] truncate">{result.title}</p>
-                                <p className="text-xs text-zinc-400 truncate">{result.artist}</p>
-                            </div>
-                        ))}
-                    </div>
-                )}
+                {/* Search Bar */}
+                <div className="relative w-80">
+                    <form onSubmit={handleSearch} className="relative">
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder="Search artist or title..."
+                            className="w-full bg-black/80 backdrop-blur-md border border-white/20 rounded-full py-3 px-5 text-sm font-mono text-white placeholder-zinc-500 focus:outline-none focus:border-[#00e5ff] focus:ring-1 focus:ring-[#00e5ff] transition-all"
+                        />
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (nodesRef.current.length === 0) return;
+                                const randomNode = nodesRef.current[Math.floor(Math.random() * nodesRef.current.length)];
+                                jumpToNode(randomNode);
+                                setSearchResults([]);
+                                setSearchQuery("");
+                            }}
+                            className="absolute right-2 top-2 bottom-2 px-4 rounded-full bg-white/10 hover:bg-white/20 text-xs font-bold transition-colors"
+                        >
+                            RANDOM
+                        </button>
+                    </form>
+
+                    {searchResults.length > 0 && (
+                        <div className="absolute top-full left-0 right-0 mt-2 bg-black/90 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl max-h-[70vh] overflow-y-auto">
+                            {searchResults.map((result, i) => (
+                                <div
+                                    key={result.id + i}
+                                    onClick={() => {
+                                        jumpToNode(result as UniverseNode);
+                                        setSearchResults([]);
+                                        setSearchQuery("");
+                                    }}
+                                    className="p-3 border-b border-white/5 hover:bg-white/10 cursor-pointer transition-colors group"
+                                >
+                                    <p className="text-sm font-bold text-white group-hover:text-[#00e5ff] truncate">{result.title}</p>
+                                    <p className="text-xs text-zinc-400 truncate">{result.artist}</p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
             </div>
 
-            {/* Right: Local Neighborhood Sidebar — docked to screen edge */}
-            {displayTrack && (
+            {/* Right: Local Neighborhood / Liked Songs Sidebar */}
+            {(displayTrack || sidebarTab === 'liked') && (
                 <div className="absolute top-[5rem] right-10 z-20 flex flex-row items-start">
                     {/* Thin full-height toggle tab on the left of the panel */}
                     <button
                         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
                         className="w-5 self-stretch min-h-[3rem] flex items-center justify-center bg-black/80 backdrop-blur-xl border-l border-y border-white/20 rounded-l-xl hover:bg-white/15 transition-colors shrink-0"
-                        title={isSidebarOpen ? 'Hide similar tracks' : 'Show similar tracks'}
+                        title={isSidebarOpen ? 'Hide panel' : 'Show panel'}
                     >
                         {isSidebarOpen
                             ? <FaChevronRight size={7} className="text-white/40" />
@@ -984,48 +1098,169 @@ export default function UniverseCanvas() {
                     {/* Drawer panel */}
                     {isSidebarOpen && (
                         <div className="w-80 bg-black/80 backdrop-blur-xl border border-white/20 rounded-r-xl overflow-hidden shadow-2xl animate-in fade-in slide-in-from-right-4 duration-300">
-                            {/* Header */}
-                            <div className="px-3 py-3 bg-gradient-to-br from-[#e040fb]/20 to-[#00e5ff]/20 border-b border-white/20 flex items-center gap-2">
-                                <div className="min-w-0 flex-1">
-                                    <p className="text-lg font-bold text-white tracking-wide uppercase leading-tight">Similar Tracks</p>
-                                    <p className="text-[11px] text-zinc-400 truncate leading-tight">{displayTrack.artist} - {displayTrack.title}</p>
-                                </div>
-                                <a href={displayTrack.url || `https://soundcloud.com/search?q=${encodeURIComponent(displayTrack.artist + ' ' + displayTrack.title)}`} target="_blank" rel="noreferrer"
-                                    className="text-[#ff5500] hover:text-white transition-colors p-1.5 bg-white/10 rounded-full shrink-0"
-                                    onClick={(e) => e.stopPropagation()}
+                            {/* Tab switcher */}
+                            <div className="flex border-b border-white/10">
+                                {displayTrack && (
+                                    <button
+                                        onClick={() => setSidebarTab('similar')}
+                                        className={`flex-1 px-3 py-2 text-sm font-mono transition-colors ${sidebarTab === 'similar' ? 'bg-white/10 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                    >
+                                        Similar
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => setSidebarTab('liked')}
+                                    className={`flex-1 px-3 py-2 text-sm font-mono transition-colors flex items-center justify-center gap-1.5 ${sidebarTab === 'liked' ? 'bg-white/10 text-[#ff2d75]' : 'text-zinc-500 hover:text-zinc-300'}`}
                                 >
-                                    <FaSoundcloud size={14} />
-                                </a>
+                                    <FaHeart size={12} /> Liked
+                                </button>
                             </div>
 
-                            {/* Nearest Neighbors List */}
-                            <div className="max-h-[calc(100vh-9rem)] overflow-y-auto">
-                                {neighbors.length > 0 ? (
-                                    neighbors.map((n) => (
-                                        <div key={n.id}
-                                            onClick={() => jumpToNode(n as UniverseNode)}
-                                            className="p-3 border-b border-white/5 hover:bg-white/10 cursor-pointer transition-colors group flex justify-between items-center gap-3">
-                                            <div className="font-mono text-[10px] text-[#00e5ff] w-10 text-right shrink-0">{n.match_pct != null ? `${n.match_pct}%` : ''}</div>
+                            {sidebarTab === 'similar' ? (
+                                <>
+                                    {/* Similar Tracks Header */}
+                                    {displayTrack && (
+                                        <div className="px-3 py-3 bg-gradient-to-br from-[#e040fb]/20 to-[#00e5ff]/20 border-b border-white/20 flex items-center gap-2">
                                             <div className="min-w-0 flex-1">
-                                                <p className="text-[13px] font-bold text-zinc-200 group-hover:text-white truncate transition-colors">{n.title}</p>
-                                                <p className="text-[11px] text-zinc-500 group-hover:text-zinc-300 truncate transition-colors">{n.artist}</p>
+                                                <p className="text-lg font-bold text-white tracking-wide uppercase leading-tight">Similar Tracks</p>
+                                                <p className="text-[11px] text-zinc-400 truncate leading-tight">{displayTrack.artist} - {displayTrack.title}</p>
                                             </div>
-                                            {n.url && (
-                                                <a href={n.url} target="_blank" rel="noreferrer"
-                                                    className="text-zinc-600 hover:text-[#ff5500] transition-colors p-1.5 shrink-0"
-                                                    onClick={(e) => e.stopPropagation()}
-                                                >
-                                                    <FaSoundcloud size={16} />
-                                                </a>
-                                            )}
+                                            <a href={PLATFORMS[platform].buildUrl(displayTrack)} target="_blank" rel="noreferrer"
+                                                className="transition-colors p-1.5 bg-white/10 rounded-full shrink-0"
+                                                style={{ color: PLATFORMS[platform].color }}
+                                                onClick={(e) => e.stopPropagation()}
+                                                onMouseEnter={(e) => (e.currentTarget.style.color = '#ffffff')}
+                                                onMouseLeave={(e) => (e.currentTarget.style.color = PLATFORMS[platform].color)}
+                                            >
+                                                {React.createElement(PLATFORMS[platform].icon, { size: 14 })}
+                                            </a>
                                         </div>
-                                    ))
-                                ) : (
-                                    <div className="p-8 flex items-center justify-center">
-                                        <div className="w-5 h-5 border-2 border-[#00e5ff] border-t-transparent flex-shrink-0 rounded-full animate-spin"></div>
+                                    )}
+
+                                    {/* Nearest Neighbors List */}
+                                    <div className="max-h-[calc(100vh-9rem)] overflow-y-auto">
+                                        {neighbors.length > 0 ? (
+                                            neighbors.map((n) => (
+                                                <div key={n.id}
+                                                    onClick={() => jumpToNode(n as UniverseNode)}
+                                                    className="p-3 border-b border-white/5 hover:bg-white/10 cursor-pointer transition-colors group flex justify-between items-center gap-3">
+                                                    <div className="font-mono text-[10px] text-[#00e5ff] w-10 text-right shrink-0">{n.match_pct != null ? `${n.match_pct}%` : ''}</div>
+                                                    <div className="min-w-0 flex-1">
+                                                        <p className="text-[13px] font-bold text-zinc-200 group-hover:text-white truncate transition-colors">{n.title}</p>
+                                                        <p className="text-[11px] text-zinc-500 group-hover:text-zinc-300 truncate transition-colors">{n.artist}</p>
+                                                    </div>
+                                                    <a href={PLATFORMS[platform].buildUrl(n)} target="_blank" rel="noreferrer"
+                                                        className="text-zinc-600 transition-colors p-1.5 shrink-0"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        onMouseEnter={(e) => (e.currentTarget.style.color = PLATFORMS[platform].color)}
+                                                        onMouseLeave={(e) => (e.currentTarget.style.color = '')}
+                                                    >
+                                                        {React.createElement(PLATFORMS[platform].icon, { size: 16 })}
+                                                    </a>
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <div className="p-8 flex items-center justify-center">
+                                                <div className="w-5 h-5 border-2 border-[#00e5ff] border-t-transparent flex-shrink-0 rounded-full animate-spin"></div>
+                                            </div>
+                                        )}
                                     </div>
-                                )}
-                            </div>
+                                </>
+                            ) : (
+                                <>
+                                    {/* Liked Songs Header */}
+                                    <div className="px-3 py-3 bg-gradient-to-br from-[#e040fb]/20 to-[#00e5ff]/20 border-b border-white/20">
+                                        <p className="text-lg font-bold text-white tracking-wide uppercase leading-tight">Liked Songs</p>
+                                        <p className="text-[11px] text-zinc-400 mt-0.5">{likedTrackIds.length} track{likedTrackIds.length !== 1 ? 's' : ''}</p>
+                                        <div className="mt-2 flex gap-2">
+                                            <button
+                                                onClick={() => {
+                                                    if (likedTrackIds.length === 0 || nodes.length === 0) return;
+                                                    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+                                                    const likedNodes = likedTrackIds.map(id => nodeMap.get(id)).filter((n): n is UniverseNode => n != null);
+                                                    if (likedNodes.length === 0) return;
+                                                    const avgX = likedNodes.reduce((s, n) => s + n.x, 0) / likedNodes.length;
+                                                    const avgY = likedNodes.reduce((s, n) => s + n.y, 0) / likedNodes.length;
+                                                    const likedIdSet = new Set(likedTrackIds);
+                                                    let best: UniverseNode | null = null;
+                                                    let bestDistSq = Infinity;
+                                                    for (const node of nodes) {
+                                                        if (likedIdSet.has(node.id)) continue;
+                                                        if (focalTrack && node.id === focalTrack.id) continue;
+                                                        const dx = node.x - avgX;
+                                                        const dy = node.y - avgY;
+                                                        const d = dx * dx + dy * dy;
+                                                        if (d < bestDistSq) {
+                                                            bestDistSq = d;
+                                                            best = node;
+                                                        }
+                                                    }
+                                                    if (best) jumpToNode(best);
+                                                }}
+                                                disabled={likedTrackIds.length === 0}
+                                                className="flex-1 py-2 px-3 rounded-lg bg-[#00e5ff]/20 hover:bg-[#00e5ff]/30 text-[#00e5ff] text-sm font-mono font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                            >
+                                                Find matches
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    setLikedTrackIds([]);
+                                                    localStorage.setItem('ambis-liked-tracks', JSON.stringify([]));
+                                                }}
+                                                disabled={likedTrackIds.length === 0}
+                                                className="py-2 px-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-zinc-400 hover:text-white text-xs font-mono disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+                                            >
+                                                Clear likes
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Liked Tracks List */}
+                                    <div className="max-h-[calc(100vh-9rem)] overflow-y-auto">
+                                        {(() => {
+                                            const nodeMap = new Map(nodes.map(n => [n.id, n]));
+                                            const likedNodes = likedTrackIds.map(id => nodeMap.get(id)).filter((n): n is UniverseNode => n != null);
+                                            if (likedNodes.length === 0) {
+                                                return (
+                                                    <div className="p-8 text-center text-zinc-500 text-sm font-mono">
+                                                        No liked songs yet. Like tracks from the map to add them here.
+                                                    </div>
+                                                );
+                                            }
+                                            return likedNodes.map((n) => (
+                                                <div key={n.id}
+                                                    onClick={() => jumpToNode(n)}
+                                                    className="p-3 border-b border-white/5 hover:bg-white/10 cursor-pointer transition-colors group flex justify-between items-center gap-3">
+                                                    <div className="min-w-0 flex-1">
+                                                        <p className="text-[13px] font-bold text-zinc-200 group-hover:text-white truncate transition-colors">{n.title}</p>
+                                                        <p className="text-[11px] text-zinc-500 group-hover:text-zinc-300 truncate transition-colors">{n.artist}</p>
+                                                    </div>
+                                                    <div className="flex items-center gap-1 shrink-0">
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                toggleLike(n.id);
+                                                            }}
+                                                            className="text-[#ff2d75] hover:text-[#ff5a8f] transition-colors p-1.5"
+                                                            title="Unlike"
+                                                        >
+                                                            <FaHeart size={14} />
+                                                        </button>
+                                                        <a href={PLATFORMS[platform].buildUrl(n)} target="_blank" rel="noreferrer"
+                                                            className="text-zinc-600 transition-colors p-1.5"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            onMouseEnter={(e) => (e.currentTarget.style.color = PLATFORMS[platform].color)}
+                                                            onMouseLeave={(e) => (e.currentTarget.style.color = '')}
+                                                        >
+                                                            {React.createElement(PLATFORMS[platform].icon, { size: 16 })}
+                                                        </a>
+                                                    </div>
+                                                </div>
+                                            ));
+                                        })()}
+                                    </div>
+                                </>
+                            )}
                         </div>
                     )}
                 </div>
@@ -1123,7 +1358,7 @@ export default function UniverseCanvas() {
                 {/* Separate Layer exclusively for the active Supernova track to guarantee shadow rendering */}
                 <Layer>
                     {focalTrack && (() => {
-                        const focalLiked = likedTracks.has(focalTrack.id);
+                        const focalLiked = likedSet.has(focalTrack.id);
                         return (
                             <Group x={focalTrack.x} y={focalTrack.y} listening={false}
                                 ref={(node) => {
