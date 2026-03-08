@@ -43,7 +43,7 @@ export default function UniverseCanvas() {
     const [isSearching, setIsSearching] = useState(false);
 
     // Sidebar State
-    const [neighbors, setNeighbors] = useState<{ id: string, artist: string, title: string, x: number, y: number, url?: string }[]>([]);
+    const [neighbors, setNeighbors] = useState<{ id: string, artist: string, title: string, x: number, y: number, url?: string, match_pct?: number }[]>([]);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
     // Audio Player State
@@ -71,6 +71,11 @@ export default function UniverseCanvas() {
     const zoomCooldownRef = useRef(0);
     const prevViewRef = useRef({ x: 0, y: 0, scale: DEFAULT_ZOOM });
     const scaleRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const isInteractingRef = useRef(false);
+    const interactionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [isInteracting, setIsInteracting] = useState(false);
+    const [visibleNodes, setVisibleNodes] = useState<UniverseNode[]>([]);
+    const scopeDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
 
     // 1. Fetch Universe from FastAPI
     useEffect(() => {
@@ -91,6 +96,7 @@ export default function UniverseCanvas() {
                 }));
                 setNodes(scaled);
                 nodesRef.current = scaled;
+                setVisibleNodes(scaled);
                 // Auto-center camera on a random node so each visit starts somewhere different
                 if (scaled.length > 0) {
                     const first = scaled[Math.floor(Math.random() * scaled.length)];
@@ -163,17 +169,18 @@ export default function UniverseCanvas() {
         }
     };
 
-    // 3. Zoom Logic (Mouse Wheel) — fully imperative, writes only to viewRef
+    // 3. Zoom Logic (Mouse Wheel) — zooms from screen center to keep focal track pinned
     const handleWheel = (e: any) => {
         e.evt.preventDefault();
         initAudioGraph();
         const v = viewRef.current;
         const stage = stageRef.current;
-        const pointer = stage?.getPointerPosition();
-        if (!pointer) return;
-        const mousePointTo = {
-            x: (pointer.x - v.x) / v.scale,
-            y: (pointer.y - v.y) / v.scale,
+
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        const centerPointTo = {
+            x: (cx - v.x) / v.scale,
+            y: (cy - v.y) / v.scale,
         };
 
         const scaleBy = 1.15;
@@ -182,11 +189,10 @@ export default function UniverseCanvas() {
 
         viewRef.current = {
             scale: clampedScale,
-            x: pointer.x - mousePointTo.x * clampedScale,
-            y: pointer.y - mousePointTo.y * clampedScale,
+            x: cx - centerPointTo.x * clampedScale,
+            y: cy - centerPointTo.y * clampedScale,
         };
 
-        // Apply transform directly to stage for instant visual feedback
         if (stage) {
             stage.x(viewRef.current.x);
             stage.y(viewRef.current.y);
@@ -196,10 +202,16 @@ export default function UniverseCanvas() {
             prevViewRef.current = { ...viewRef.current };
         }
 
-        // Pause ALL reactive systems (gravity, focal track, display track) while zooming
         zoomCooldownRef.current = performance.now() + 1000;
 
-        // Debounce the React state sync so we don't re-render on every wheel tick
+        isInteractingRef.current = true;
+        if (!isInteracting) setIsInteracting(true);
+        if (interactionTimerRef.current) clearTimeout(interactionTimerRef.current);
+        interactionTimerRef.current = setTimeout(() => {
+            isInteractingRef.current = false;
+            setIsInteracting(false);
+        }, 300);
+
         if (scaleRenderTimerRef.current) clearTimeout(scaleRenderTimerRef.current);
         scaleRenderTimerRef.current = setTimeout(() => {
             setScaleForRender(viewRef.current.scale);
@@ -213,19 +225,87 @@ export default function UniverseCanvas() {
     useEffect(() => {
         if (dimensions.width === 0 || nodes.length === 0) return;
 
-        const updateFocalTrack = () => {
-            const centerX = dimensions.width / 2;
-            const centerY = dimensions.height / 2;
+        let lastVisibleUpdate = 0;
+        let lastCullView = { x: NaN, y: NaN, scale: NaN };
+
+        const computeVisibleNodes = () => {
             const v = viewRef.current;
 
-            // Convert Screen Center to Canvas logical coordinates
+            // Skip if viewport hasn't moved since the last cull
+            const dx = Math.abs(v.x - lastCullView.x);
+            const dy = Math.abs(v.y - lastCullView.y);
+            const ds = Math.abs(v.scale - lastCullView.scale);
+            if (dx < 1 && dy < 1 && ds < 0.01) return;
+            lastCullView = { x: v.x, y: v.y, scale: v.scale };
+
+            const vw = dimensions.width / v.scale;
+            const vh = dimensions.height / v.scale;
+            const logCx = (dimensions.width / 2 - v.x) / v.scale;
+            const logCy = (dimensions.height / 2 - v.y) / v.scale;
+            const buffer = 150;
+
+            const filtered = nodesRef.current.filter(n =>
+                n.x > logCx - vw / 2 - buffer && n.x < logCx + vw / 2 + buffer &&
+                n.y > logCy - vh / 2 - buffer && n.y < logCy + vh / 2 + buffer
+            );
+            setVisibleNodes(filtered);
+        };
+
+        const updateFocalTrack = () => {
+            const now = performance.now();
+            const v = viewRef.current;
+            const stage = stageRef.current;
+            const prevView = prevViewRef.current;
+
+            // During interaction, skip all expensive proximity/gravity work.
+            // Only sync stage position (for drag visuals) and beat-reactive star.
+            if (isInteractingRef.current) {
+                if (stage && (v.x !== prevView.x || v.y !== prevView.y || v.scale !== prevView.scale)) {
+                    stage.x(v.x);
+                    stage.y(v.y);
+                    stage.scaleX(v.scale);
+                    stage.scaleY(v.scale);
+                    stage.batchDraw();
+                    prevViewRef.current = { x: v.x, y: v.y, scale: v.scale };
+                }
+
+                if (analyserRef.current && focalGroupRef.current) {
+                    analyserRef.current.getByteFrequencyData(audioDataRef.current);
+                    const bassEnd = 4;
+                    let sum = 0;
+                    for (let i = 0; i < bassEnd; i++) sum += audioDataRef.current[i];
+                    let bassAvg = (sum / bassEnd) / 255;
+                    bassAvg = Math.pow(bassAvg, 3.0);
+                    const focalZoom = Math.max(1.0, Math.sqrt(8.0 / v.scale));
+                    const targetScale = (0.2 + (bassAvg * 3.0)) * focalZoom;
+                    const currentScale = focalGroupRef.current.scaleX() || 1;
+                    const lerp = targetScale > currentScale ? 0.9 : 0.08;
+                    const smoothed = currentScale + (targetScale - currentScale) * lerp;
+                    if (Math.abs(smoothed - currentScale) > 0.005) {
+                        focalGroupRef.current.scale({ x: smoothed, y: smoothed });
+                        focalGroupRef.current.getLayer()?.batchDraw();
+                    }
+                }
+
+                rafRef.current = requestAnimationFrame(updateFocalTrack);
+                return;
+            }
+
+            // Throttled viewport culling (only when idle)
+            if (now - lastVisibleUpdate > 300) {
+                lastVisibleUpdate = now;
+                computeVisibleNodes();
+            }
+
+            const centerX = dimensions.width / 2;
+            const centerY = dimensions.height / 2;
+
             const logicalCenterX = (centerX - v.x) / v.scale;
             const logicalCenterY = (centerY - v.y) / v.scale;
 
-            // Spatial Filter Bounding Box: Check all dots visible inside the current screen bounds
             const vWidth = dimensions.width / v.scale;
             const vHeight = dimensions.height / v.scale;
-            const minX = logicalCenterX - (vWidth / 2) - 50; // 50px rendering buffer
+            const minX = logicalCenterX - (vWidth / 2) - 50;
             const maxX = logicalCenterX + (vWidth / 2) + 50;
             const minY = logicalCenterY - (vHeight / 2) - 50;
             const maxY = logicalCenterY + (vHeight / 2) + 50;
@@ -235,16 +315,11 @@ export default function UniverseCanvas() {
 
             for (let i = 0; i < nodesRef.current.length; i++) {
                 const node = nodesRef.current[i];
+                if (node.x < minX || node.x > maxX || node.y < minY || node.y > maxY) continue;
 
-                // Fast bounding-box exclusion (no square roots)
-                if (node.x < minX || node.x > maxX || node.y < minY || node.y > maxY) {
-                    continue;
-                }
-
-                // If inside bounds, calculate true Pythagorean distance
                 const dx = node.x - logicalCenterX;
                 const dy = node.y - logicalCenterY;
-                const distSq = dx * dx + dy * dy; // We can just compare squared distances for speed
+                const distSq = dx * dx + dy * dy;
 
                 if (distSq < minDistance) {
                     minDistance = distSq;
@@ -252,19 +327,16 @@ export default function UniverseCanvas() {
                 }
             }
 
-            const zoomPaused = performance.now() < zoomCooldownRef.current;
+            const zoomPaused = now < zoomCooldownRef.current;
 
-            // During zoom cooldown, freeze all reactive systems — no track changes, no gravity
             const nearestNode = closestNode;
             if (!zoomPaused) {
-                // displayTrack is always the nearest node (powers the sidebar)
                 setDisplayTrack((prev) => {
                     if (prev?.id !== nearestNode?.id) return nearestNode;
                     return prev;
                 });
             }
 
-            // Only allow nodes within a 30 screen-pixel radius to become the Focal Track
             const maxLogicalRadius = 30 / v.scale;
             const maxDistanceSq = maxLogicalRadius * maxLogicalRadius;
 
@@ -272,7 +344,6 @@ export default function UniverseCanvas() {
                 closestNode = null;
             }
 
-            // Always pull the camera toward the nearest node's exact center
             let viewDirty = false;
             if (nearestNode && !isDraggingRef.current && !zoomPaused) {
                 const targetX = centerX - nearestNode.x * v.scale;
@@ -282,18 +353,19 @@ export default function UniverseCanvas() {
                 const distPx = Math.sqrt(dx * dx + dy * dy);
 
                 if (distPx > 0.5) {
-                    const strength = 0.5;
-                    const moveX = distPx < 1 ? dx : dx * strength;
-                    const moveY = distPx < 1 ? dy : dy * strength;
-                    viewRef.current.x += moveX;
-                    viewRef.current.y += moveY;
+                    if (distPx < 2) {
+                        // Snap to target to avoid infinite floating-point drift
+                        viewRef.current.x = targetX;
+                        viewRef.current.y = targetY;
+                    } else {
+                        const strength = 0.5;
+                        viewRef.current.x += dx * strength;
+                        viewRef.current.y += dy * strength;
+                    }
                     viewDirty = true;
                 }
             }
 
-            // Apply viewRef to stage only when something changed
-            const stage = stageRef.current;
-            const prevView = prevViewRef.current;
             if (stage && (viewDirty || v.x !== prevView.x || v.y !== prevView.y || v.scale !== prevView.scale)) {
                 stage.x(v.x);
                 stage.y(v.y);
@@ -303,7 +375,6 @@ export default function UniverseCanvas() {
                 prevViewRef.current = { x: v.x, y: v.y, scale: v.scale };
             }
 
-            // Use React state to trigger the secondary Layer overlay (frozen during zoom)
             if (!zoomPaused) {
                 setFocalTrack((prev) => {
                     if (prev?.id !== closestNode?.id) return closestNode;
@@ -311,30 +382,22 @@ export default function UniverseCanvas() {
                 });
             }
 
-            // Beat-reactive star: read bass amplitude and scale the focal group imperatively
             if (analyserRef.current && focalGroupRef.current) {
                 analyserRef.current.getByteFrequencyData(audioDataRef.current);
-
-                // Sub-bass kick detection: only the lowest 4 bins (~0-170Hz)
                 const bassEnd = 4;
                 let sum = 0;
                 for (let i = 0; i < bassEnd; i++) sum += audioDataRef.current[i];
                 let bassAvg = (sum / bassEnd) / 255;
-
-                // Aggressive power curve to isolate kick transients from background
                 bassAvg = Math.pow(bassAvg, 3.0);
-
-                // Resting scale shrinks so the average with kicks ≈ 1.0
-                const targetScale = 0.2 + (bassAvg * 3.0);
+                const focalZoom = Math.max(1.0, Math.sqrt(8.0 / v.scale));
+                const targetScale = (0.2 + (bassAvg * 3.0)) * focalZoom;
                 const currentScale = focalGroupRef.current.scaleX() || 1;
-
-                // Instant attack, slow decay — kicks snap out, then breathe back
                 const lerp = targetScale > currentScale ? 0.9 : 0.08;
                 const smoothed = currentScale + (targetScale - currentScale) * lerp;
-
-                focalGroupRef.current.scale({ x: smoothed, y: smoothed });
-                // Only redraw the focal layer, not the entire stage
-                focalGroupRef.current.getLayer()?.batchDraw();
+                if (Math.abs(smoothed - currentScale) > 0.005) {
+                    focalGroupRef.current.scale({ x: smoothed, y: smoothed });
+                    focalGroupRef.current.getLayer()?.batchDraw();
+                }
             }
 
             rafRef.current = requestAnimationFrame(updateFocalTrack);
@@ -346,31 +409,33 @@ export default function UniverseCanvas() {
         };
     }, [dimensions, nodes.length]);
 
-    // 5. Fetch Nearest Neighbors when display track changes (always the closest node)
+    // 5. Fetch Nearest Neighbors (debounced, skipped during interaction)
     useEffect(() => {
         if (!displayTrack) {
             setNeighbors([]);
             return;
         }
+        if (isInteractingRef.current) return;
 
-        let isMounted = true;
-        fetch(`${API_BASE}/api/neighbors/${encodeURIComponent(displayTrack.id)}`)
-            .then(res => {
-                if (!res.ok) throw new Error("Failed to fetch neighbors");
-                return res.json();
-            })
-            .then(data => {
-                if (isMounted) setNeighbors(data);
-            })
-            .catch(err => console.error("Neighbor fetch error:", err));
+        const controller = new AbortController();
+        const timer = setTimeout(() => {
+            fetch(`${API_BASE}/api/neighbors/${encodeURIComponent(displayTrack.id)}`, { signal: controller.signal })
+                .then(res => {
+                    if (!res.ok) throw new Error("Failed to fetch neighbors");
+                    return res.json();
+                })
+                .then(data => setNeighbors(data))
+                .catch(() => {});
+        }, 400);
 
-        return () => { isMounted = false; };
-    }, [displayTrack?.id]);
+        return () => { clearTimeout(timer); controller.abort(); };
+    }, [displayTrack?.id, isInteracting]);
 
-    // 6. Audio Player — load and play 30s snippet when focal track changes
+    // 6. Audio Player — load and play 30s snippet when focal track changes (skipped during interaction)
     useEffect(() => {
         const audio = audioRef.current;
         if (!audio || !hasEntered) return;
+        if (isInteractingRef.current) return;
 
         if (!focalTrack) {
             audio.pause();
@@ -395,51 +460,66 @@ export default function UniverseCanvas() {
                     setAudioState('idle');
                 }
             });
-    }, [focalTrack?.id, hasEntered]);
+    }, [focalTrack?.id, hasEntered, isInteracting]);
 
-    // 7. Oscilloscope waveform drawing loop
+    // 7. Oscilloscope waveform drawing loop — only runs when audio is playing, throttled to 30fps
     useEffect(() => {
-        const draw = () => {
+        if (audioState !== 'playing') {
             const canvas = scopeCanvasRef.current;
-            const analyser = analyserRef.current;
-            if (!canvas || !analyser) {
-                scopeRafRef.current = requestAnimationFrame(draw);
-                return;
+            if (canvas) {
+                const ctx = canvas.getContext('2d');
+                if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
             }
+            return;
+        }
 
-            const ctx = canvas.getContext('2d');
-            if (!ctx) { scopeRafRef.current = requestAnimationFrame(draw); return; }
+        const canvas = scopeCanvasRef.current;
+        const analyser = analyserRef.current;
+        if (!canvas || !analyser) return;
 
-            const bufferLength = analyser.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-            analyser.getByteTimeDomainData(dataArray);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
 
-            const w = canvas.width;
-            const h = canvas.height;
-            ctx.clearRect(0, 0, w, h);
+        if (!scopeDataRef.current) {
+            scopeDataRef.current = new Uint8Array(analyser.frequencyBinCount);
+        }
+        const dataArray = scopeDataRef.current;
+        const w = canvas.width;
+        const h = canvas.height;
+        const bufferLength = dataArray.length;
+        const sliceWidth = w / bufferLength;
 
-            ctx.lineWidth = 1.5;
-            ctx.strokeStyle = '#00e5ff';
-            ctx.beginPath();
+        let lastDraw = 0;
+        const FRAME_INTERVAL = 33; // ~30fps
 
-            const sliceWidth = w / bufferLength;
-            let x = 0;
-            for (let i = 0; i < bufferLength; i++) {
-                const v = dataArray[i] / 128.0;
-                const y = (v * h) / 2;
-                if (i === 0) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
-                x += sliceWidth;
+        const draw = (time: number) => {
+            if (time - lastDraw >= FRAME_INTERVAL) {
+                lastDraw = time;
+                analyser.getByteTimeDomainData(dataArray);
+
+                ctx.clearRect(0, 0, w, h);
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = '#00e5ff';
+                ctx.beginPath();
+
+                let x = 0;
+                for (let i = 0; i < bufferLength; i++) {
+                    const v = dataArray[i] / 128.0;
+                    const y = (v * h) / 2;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                    x += sliceWidth;
+                }
+                ctx.lineTo(w, h / 2);
+                ctx.stroke();
             }
-            ctx.lineTo(w, h / 2);
-            ctx.stroke();
 
             scopeRafRef.current = requestAnimationFrame(draw);
         };
 
         scopeRafRef.current = requestAnimationFrame(draw);
         return () => { cancelAnimationFrame(scopeRafRef.current); };
-    }, []);
+    }, [audioState]);
 
     // Handle search/neighbor jump
     const jumpToNode = (node: UniverseNode) => {
@@ -504,76 +584,52 @@ export default function UniverseCanvas() {
         setIsSearching(false);
     };
 
-    const memoizedNodes = useMemo(() => nodes.map((node) => (
+    const showBloom = scaleForRender >= 1.5;
+    const nodeListening = scaleForRender >= 2.0;
+    // Compensate for zoom so dots stay visible as tiny stars at any zoom level.
+    // Uses a square root curve so the scale grows gently rather than linearly.
+    const nodeScale = Math.max(1.0, Math.sqrt(1.5 / scaleForRender));
+
+    const memoizedNodes = useMemo(() => visibleNodes.map((node) => (
         <Group
             key={node.id}
             id={'node-' + node.id}
             x={node.x}
             y={node.y}
-            onMouseEnter={(e) => {
+            scaleX={nodeScale}
+            scaleY={nodeScale}
+            onMouseEnter={nodeListening ? (e) => {
                 const container = e.target.getStage()?.container();
                 if (container) container.style.cursor = 'crosshair';
-            }}
-            onMouseLeave={(e) => {
+            } : undefined}
+            onMouseLeave={nodeListening ? (e) => {
                 const container = e.target.getStage()?.container();
                 if (container) container.style.cursor = 'grab';
-            }}
-            onClick={() => {
-                // Konva node positions are already scaled by 2000x when we created them in the API handler
-                // So we just pass x,y and let jumpToNode handle calculating the center
-                const cx = window.innerWidth / 2;
-                const cy = window.innerHeight / 2;
-                const targetScale = DEFAULT_ZOOM;
-                const targetX = cx - node.x * targetScale;
-                const targetY = cy - node.y * targetScale;
-
-                const startX = viewRef.current.x;
-                const startY = viewRef.current.y;
-                const startScale = viewRef.current.scale;
-
-                const duration = 800; // ms
-                const startTime = performance.now();
-
-                const animateFlight = (time: number) => {
-                    const elapsed = time - startTime;
-                    const progress = Math.min(elapsed / duration, 1);
-                    const ease = 1 - Math.pow(1 - progress, 3);
-
-                    const currentX = startX + (targetX - startX) * ease;
-                    const currentY = startY + (targetY - startY) * ease;
-                    const currentScale = startScale + (targetScale - startScale) * ease;
-
-                    viewRef.current = { scale: currentScale, x: currentX, y: currentY };
-                    setScaleForRender(currentScale);
-
-                    if (progress < 1) requestAnimationFrame(animateFlight);
-                };
-                zoomCooldownRef.current = performance.now() + duration + 500;
-                requestAnimationFrame(animateFlight);
-            }}
+            } : undefined}
+            onClick={nodeListening ? () => jumpToNode(node) : undefined}
         >
-            {/* Bloom/Glow */}
-            <Circle
-                radius={6}
-                fillRadialGradientStartPoint={{ x: 0, y: 0 }}
-                fillRadialGradientStartRadius={0}
-                fillRadialGradientEndPoint={{ x: 0, y: 0 }}
-                fillRadialGradientEndRadius={6}
-                fillRadialGradientColorStops={[
-                    0, 'rgba(255, 255, 255, 0.35)',
-                    0.4, 'rgba(255, 255, 255, 0.1)',
-                    1, 'rgba(255, 255, 255, 0)'
-                ]}
-                perfectDrawEnabled={false}
-                listening={true}
-                hitFunc={(context, shape) => {
-                    context.beginPath();
-                    context.arc(0, 0, 7, 0, Math.PI * 2, true);
-                    context.closePath();
-                    context.fillStrokeShape(shape);
-                }}
-            />
-            {/* Core */}
+            {showBloom && (
+                <Circle
+                    radius={6}
+                    fillRadialGradientStartPoint={{ x: 0, y: 0 }}
+                    fillRadialGradientStartRadius={0}
+                    fillRadialGradientEndPoint={{ x: 0, y: 0 }}
+                    fillRadialGradientEndRadius={6}
+                    fillRadialGradientColorStops={[
+                        0, 'rgba(255, 255, 255, 0.35)',
+                        0.4, 'rgba(255, 255, 255, 0.1)',
+                        1, 'rgba(255, 255, 255, 0)'
+                    ]}
+                    perfectDrawEnabled={false}
+                    listening={nodeListening}
+                    hitFunc={nodeListening ? (context, shape) => {
+                        context.beginPath();
+                        context.arc(0, 0, 7, 0, Math.PI * 2, true);
+                        context.closePath();
+                        context.fillStrokeShape(shape);
+                    } : undefined}
+                />
+            )}
             <Circle
                 radius={0.8}
                 fillRadialGradientStartPoint={{ x: 0, y: 0 }}
@@ -591,28 +647,47 @@ export default function UniverseCanvas() {
                 listening={false}
             />
         </Group>
-    )), [nodes]);
+    )), [visibleNodes, showBloom, nodeListening, nodeScale]);
 
-    // Precompute nearest-neighbor edges (each node connects to its 2 closest neighbors)
+    // Precompute nearest-neighbor edges using a grid spatial index (O(n*k) instead of O(n²))
     const memoizedEdges = useMemo(() => {
         if (nodes.length < 2) return null;
+
+        const cellSize = 50;
+        const grid = new Map<string, number[]>();
+        for (let i = 0; i < nodes.length; i++) {
+            const key = `${Math.floor(nodes[i].x / cellSize)},${Math.floor(nodes[i].y / cellSize)}`;
+            if (!grid.has(key)) grid.set(key, []);
+            grid.get(key)!.push(i);
+        }
+
         const lines: { x1: number; y1: number; x2: number; y2: number }[] = [];
         for (let i = 0; i < nodes.length; i++) {
             const a = nodes[i];
+            const gx = Math.floor(a.x / cellSize);
+            const gy = Math.floor(a.y / cellSize);
             let best1Dist = Infinity, best2Dist = Infinity;
             let best1J = -1, best2J = -1;
-            for (let j = 0; j < nodes.length; j++) {
-                if (i === j) continue;
-                const dx = a.x - nodes[j].x;
-                const dy = a.y - nodes[j].y;
-                const d = dx * dx + dy * dy;
-                if (d < best1Dist) {
-                    best2Dist = best1Dist; best2J = best1J;
-                    best1Dist = d; best1J = j;
-                } else if (d < best2Dist) {
-                    best2Dist = d; best2J = j;
+
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    const cell = grid.get(`${gx + dx},${gy + dy}`);
+                    if (!cell) continue;
+                    for (const j of cell) {
+                        if (i === j) continue;
+                        const ddx = a.x - nodes[j].x;
+                        const ddy = a.y - nodes[j].y;
+                        const d = ddx * ddx + ddy * ddy;
+                        if (d < best1Dist) {
+                            best2Dist = best1Dist; best2J = best1J;
+                            best1Dist = d; best1J = j;
+                        } else if (d < best2Dist) {
+                            best2Dist = d; best2J = j;
+                        }
+                    }
                 }
             }
+
             for (const bj of [best1J, best2J]) {
                 if (bj < 0) continue;
                 const b = nodes[bj];
@@ -628,7 +703,8 @@ export default function UniverseCanvas() {
                 key={`edge-${i}`}
                 points={[l.x1, l.y1, l.x2, l.y2]}
                 stroke="rgba(255,255,255,1)"
-                strokeWidth={0.3}
+                strokeWidth={1}
+                strokeScaleEnabled={false}
                 perfectDrawEnabled={false}
                 listening={false}
             />
@@ -655,8 +731,9 @@ export default function UniverseCanvas() {
         />
     )), [tagZones]);
 
-    // Edge opacity: brighter when zoomed in, faint when zoomed out
-    const edgeOpacity = Math.min(1, Math.max(0.08, 0.25 + (scaleForRender - DEFAULT_ZOOM) * 0.15));
+    // Edge opacity: peaks at default zoom, fades gently when zoomed out
+    const edgeOpacity = Math.min(1, Math.max(0.15, 0.25 + (scaleForRender - DEFAULT_ZOOM) * 0.1));
+    const showEdges = !isInteracting && scaleForRender >= 1;
 
     if (dimensions.width === 0) return null;
 
@@ -721,21 +798,27 @@ export default function UniverseCanvas() {
                                     }
                                 }
                             }}
-                            className="text-zinc-500 hover:text-[#00e5ff] transition-colors shrink-0"
+                            className="text-zinc-500 hover:text-[#00e5ff] transition-colors shrink-0 p-1"
                             title={audioState === 'playing' ? "Pause" : "Play"}
                         >
-                            {audioState === 'playing' ? <FaPause size={16} /> : <FaPlay size={16} />}
+                            {audioState === 'playing' ? <FaPause size={22} /> : <FaPlay size={22} />}
                         </button>
                         <div className="min-w-0 flex-1">
                             <p className="text-base font-bold text-white truncate">{focalTrack.title}</p>
                             <p className="text-sm text-zinc-400 truncate">{focalTrack.artist}</p>
                         </div>
-                        <canvas
-                            ref={scopeCanvasRef}
-                            width={80}
-                            height={32}
-                            className="shrink-0 opacity-80"
-                        />
+                        {audioState === 'loading' ? (
+                            <div className="w-[80px] h-[32px] shrink-0 flex items-center justify-center">
+                                <div className="w-4 h-4 border-2 border-[#00e5ff] border-t-transparent rounded-full animate-spin" />
+                            </div>
+                        ) : (
+                            <canvas
+                                ref={scopeCanvasRef}
+                                width={80}
+                                height={32}
+                                className="shrink-0 opacity-80"
+                            />
+                        )}
                     </div>
                 </div>
             )}
@@ -793,7 +876,7 @@ export default function UniverseCanvas() {
                     <button
                         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
                         className="w-5 self-stretch min-h-[3rem] flex items-center justify-center bg-black/80 backdrop-blur-xl border-l border-y border-white/20 rounded-l-xl hover:bg-white/15 transition-colors shrink-0"
-                        title={isSidebarOpen ? 'Hide neighbors' : 'Show neighbors'}
+                        title={isSidebarOpen ? 'Hide similar tracks' : 'Show similar tracks'}
                     >
                         {isSidebarOpen
                             ? <FaChevronRight size={7} className="text-white/40" />
@@ -807,8 +890,8 @@ export default function UniverseCanvas() {
                             {/* Header */}
                             <div className="px-3 py-3 bg-gradient-to-br from-[#e040fb]/20 to-[#00e5ff]/20 border-b border-white/20 flex items-center gap-2">
                                 <div className="min-w-0 flex-1">
-                                    <p className="text-m font-bold text-white truncate leading-tight">{displayTrack.title}</p>
-                                    <p className="text-sm text-zinc-400 truncate leading-tight">{displayTrack.artist}</p>
+                                    <p className="text-lg font-bold text-white tracking-wide uppercase leading-tight">Similar Tracks</p>
+                                    <p className="text-[11px] text-zinc-400 truncate leading-tight">{displayTrack.artist} - {displayTrack.title}</p>
                                 </div>
                                 <a href={displayTrack.url || `https://soundcloud.com/search?q=${encodeURIComponent(displayTrack.artist + ' ' + displayTrack.title)}`} target="_blank" rel="noreferrer"
                                     className="text-[#ff5500] hover:text-white transition-colors p-1.5 bg-white/10 rounded-full shrink-0"
@@ -821,11 +904,11 @@ export default function UniverseCanvas() {
                             {/* Nearest Neighbors List */}
                             <div className="max-h-[calc(100vh-9rem)] overflow-y-auto">
                                 {neighbors.length > 0 ? (
-                                    neighbors.map((n, i) => (
+                                    neighbors.map((n) => (
                                         <div key={n.id}
                                             onClick={() => jumpToNode(n as UniverseNode)}
                                             className="p-3 border-b border-white/5 hover:bg-white/10 cursor-pointer transition-colors group flex justify-between items-center gap-3">
-                                            <div className="font-mono text-[10px] text-zinc-500 w-4 text-right shrink-0">{i + 1}</div>
+                                            <div className="font-mono text-[10px] text-[#00e5ff] w-10 text-right shrink-0">{n.match_pct != null ? `${n.match_pct}%` : ''}</div>
                                             <div className="min-w-0 flex-1">
                                                 <p className="text-[13px] font-bold text-zinc-200 group-hover:text-white truncate transition-colors">{n.title}</p>
                                                 <p className="text-[11px] text-zinc-500 group-hover:text-zinc-300 truncate transition-colors">{n.artist}</p>
@@ -879,13 +962,19 @@ export default function UniverseCanvas() {
                 scaleY={DEFAULT_ZOOM}
                 x={0}
                 y={0}
-                onDragStart={() => { isDraggingRef.current = true; }}
+                onDragStart={() => {
+                    isDraggingRef.current = true;
+                    isInteractingRef.current = true;
+                    setIsInteracting(true);
+                }}
                 onDragMove={(e) => {
                     viewRef.current.x = e.target.x();
                     viewRef.current.y = e.target.y();
                 }}
                 onDragEnd={(e) => {
                     isDraggingRef.current = false;
+                    isInteractingRef.current = false;
+                    setIsInteracting(false);
                     viewRef.current.x = e.target.x();
                     viewRef.current.y = e.target.y();
                     zoomCooldownRef.current = performance.now() + 600;
@@ -895,15 +984,17 @@ export default function UniverseCanvas() {
                   By separating the dots into a memoized Layer that NEVER re-renders based on focalTrack state, 
                   we eliminate the 11,000-component React lag entirely.
                 */}
-                <Layer listening={false} opacity={edgeOpacity}>
-                    {memoizedEdges}
-                </Layer>
-                {tagLabelOpacity > 0.02 && (
+                {showEdges && (
+                    <Layer listening={false} opacity={edgeOpacity}>
+                        {memoizedEdges}
+                    </Layer>
+                )}
+                {!isInteracting && tagLabelOpacity > 0.02 && (
                     <Layer listening={false} opacity={tagLabelOpacity}>
                         {memoizedTagLabels}
                     </Layer>
                 )}
-                <Layer>
+                <Layer listening={nodeListening}>
                     {memoizedNodes}
                 </Layer>
 
@@ -915,16 +1006,15 @@ export default function UniverseCanvas() {
                                 focalGroupRef.current = node;
                                 if (node && prevFocalIdRef.current !== focalTrack.id) {
                                     prevFocalIdRef.current = focalTrack.id;
-                                    // Quick pop-in animation using scale
-                                    node.scale({ x: 0.3, y: 0.3 });
+                                    const focalZoom = Math.max(1.0, Math.sqrt(8.0 / viewRef.current.scale));
+                                    node.scale({ x: 0.3 * focalZoom, y: 0.3 * focalZoom });
                                     import('konva').then((Konva) => {
-                                        // Ensure node is still attached to a layer before tweening
                                         if (!node || !node.getLayer()) return;
 
                                         new Konva.default.Tween({
                                             node: node,
-                                            scaleX: 1,
-                                            scaleY: 1,
+                                            scaleX: focalZoom,
+                                            scaleY: focalZoom,
                                             easing: Konva.default.Easings.ElasticEaseOut,
                                             duration: 0.6,
                                         }).play();

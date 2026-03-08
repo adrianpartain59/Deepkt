@@ -11,6 +11,7 @@ from typing import List, Optional
 
 from deepkt import db as trackdb
 from deepkt.downloader import download_single
+from deepkt.indexer import get_collection
 
 app = FastAPI(title="HyperPhonk API")
 
@@ -90,39 +91,64 @@ def search_tracks(q: str):
     results = [{"id": r[0], "artist": r[1], "title": r[2], "x": r[3], "y": r[4]} for r in rows]
     return results
 
-@app.get("/api/neighbors/{track_id}", response_model=List[SearchResult])
+class SimilarTrack(BaseModel):
+    id: str
+    artist: str
+    title: str
+    x: float
+    y: float
+    url: Optional[str] = None
+    match_pct: float
+
+@app.get("/api/neighbors/{track_id}", response_model=List[SimilarTrack])
 def get_neighbors(track_id: str):
     """
-    Returns the 10 closest tracks by strict 2D Euclidean distance on the Universe map.
-    This guarantees that the sidebar matches exactly what the user sees on the screen.
+    Returns the 10 most sonically similar tracks using cosine similarity
+    on the full 512-dimensional CLAP embeddings (pre-UMAP).
     """
+    collection = get_collection()
+    if collection.count() == 0:
+        return []
+
+    # Retrieve the query track's embedding from ChromaDB
+    result = collection.get(ids=[track_id], include=["embeddings"])
+    if len(result["ids"]) == 0 or result["embeddings"] is None or len(result["embeddings"]) == 0:
+        raise HTTPException(status_code=404, detail="Track embedding not found")
+
+    query_embedding = result["embeddings"][0]
+
+    # Query ChromaDB for the most similar tracks (cosine distance)
+    similar = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=11,  # +1 to account for self-match
+    )
+
+    # Look up (x, y) coordinates from SQLite for map navigation
     conn = trackdb.get_db()
-    
-    # 1. Get the target track's coordinates
-    target = conn.execute('SELECT x, y FROM tracks WHERE id = ?', (track_id,)).fetchone()
-    if not target:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Track not found")
-        
-    tx, ty = target[0], target[1]
-    
-    # 2. Query for the 10 nearest tracks using squared Euclidean distance for performance
-    # SQLite doesn't have a native SQRT function without extensions, but ordering by 
-    # squared distance gives the exact same result.
-    rows = conn.execute('''
-        SELECT id, artist, title, x, y, url,
-               ((x - ?) * (x - ?) + (y - ?) * (y - ?)) as dist_sq
-        FROM tracks 
-        WHERE id != ? AND x IS NOT NULL AND status IN ('DOWNLOADED', 'INDEXED')
-        ORDER BY dist_sq ASC
-        LIMIT 10
-    ''', (tx, tx, ty, ty, track_id)).fetchall()
+    results = []
+    for sid, distance, meta in zip(
+        similar["ids"][0], similar["distances"][0], similar["metadatas"][0]
+    ):
+        if sid == track_id:
+            continue
+        row = conn.execute(
+            'SELECT x, y FROM tracks WHERE id = ?', (sid,)
+        ).fetchone()
+        if not row or row[0] is None:
+            continue
+        similarity = 1 - distance
+        results.append({
+            "id": sid,
+            "artist": meta.get("artist", ""),
+            "title": meta.get("title", ""),
+            "x": row[0],
+            "y": row[1],
+            "url": meta.get("url", ""),
+            "match_pct": round(similarity * 100, 1),
+        })
+
     conn.close()
-    
-    # Returning SearchResult (plus URL because the client needs the soundcloud link)
-    # We'll extend SearchResult to optionally include URL
-    results = [{"id": r[0], "artist": r[1], "title": r[2], "x": r[3], "y": r[4], "url": r[5]} for r in rows]
-    return results
+    return results[:10]
 
 @app.get("/api/track/{track_id}", response_model=TrackMetadata)
 def get_track_metadata(track_id: str):
