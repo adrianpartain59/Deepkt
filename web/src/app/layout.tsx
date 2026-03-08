@@ -1,10 +1,16 @@
 import type { Metadata } from "next";
 import { Outfit } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 
 const outfit = Outfit({
   subsets: ["latin"],
   variable: "--font-outfit",
+});
+
+const maswen = localFont({
+  src: "../../public/fonts/Maswen-ItalicStencil.otf",
+  variable: "--font-maswen",
 });
 
 export const metadata: Metadata = {
@@ -19,7 +25,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={`${outfit.variable} font-sans antialiased bg-black text-white overflow-hidden`}>
+      <body className={`${outfit.variable} ${maswen.variable} font-sans antialiased bg-black text-white overflow-hidden`}>
         {children}
       </body>
     </html>

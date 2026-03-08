@@ -779,7 +779,7 @@ export default function UniverseCanvas() {
                 onClick={() => { initAudioGraph(); setHasEntered(true); }}
             >
                 <div className="flex flex-col items-center gap-6">
-                    <h1 className="text-7xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider">
+                    <h1 className="text-7xl font-normal text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider" style={{ fontFamily: 'var(--font-maswen)' }}>
                         AMBIS
                     </h1>
                     <p className="text-l text-zinc-500 font-mono animate-pulse">
@@ -805,7 +805,7 @@ export default function UniverseCanvas() {
 
             {/* Top Left: AMBIS Title */}
             <div className="absolute top-6 left-6 z-10 pointer-events-none">
-                <h1 className="text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider title-glow">
+                <h1 className="text-6xl font-normal text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider title-glow" style={{ fontFamily: 'var(--font-maswen)' }}>
                     AMBIS
                 </h1>
                 <p className="text-m text-zinc-500 font-mono mt-1">
@@ -860,6 +860,18 @@ export default function UniverseCanvas() {
                                 height={32}
                                 className="shrink-0 opacity-80"
                             />
+                        )}
+                        {focalTrack.url && (
+                            <a
+                                href={focalTrack.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-zinc-500 hover:text-[#ff7700] transition-colors shrink-0 p-1"
+                                title="Open on SoundCloud"
+                            >
+                                <FaSoundcloud size={22} />
+                            </a>
                         )}
                     </div>
                 </div>
@@ -977,8 +989,21 @@ export default function UniverseCanvas() {
             )}
 
             {/* Dead-Center Focal Reticle */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border border-white/20 pointer-events-none z-10 flex items-center justify-center">
-                <div className="w-1 h-1 bg-white rounded-full"></div>
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-10">
+                <svg width="78" height="78" viewBox="0 0 78 78" className="block" style={{ overflow: 'visible' }}>
+                    {/* Outer segmented ring — spins clockwise */}
+                    <g style={{ transformOrigin: '39px 39px', animation: 'reticle-spin-cw 6s linear infinite' }}>
+                        <circle cx="39" cy="39" r="35" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5"
+                            strokeDasharray="36.65 18.33" strokeLinecap="round" />
+                    </g>
+                    {/* Inner segmented ring — spins counter-clockwise */}
+                    <g style={{ transformOrigin: '39px 39px', animation: 'reticle-spin-ccw 4s linear infinite' }}>
+                        <circle cx="39" cy="39" r="19" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5"
+                            strokeDasharray="19.9 9.95" strokeLinecap="round" />
+                    </g>
+                    {/* Center dot */}
+                    <circle cx="39" cy="39" r="1.5" fill="rgba(255,255,255,0.8)" />
+                </svg>
             </div>
 
             {/* Hidden Audio Player */}
