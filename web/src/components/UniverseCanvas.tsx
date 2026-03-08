@@ -36,6 +36,7 @@ export default function UniverseCanvas() {
 
     // Entry gate — requires one click to satisfy browser autoplay policy
     const [hasEntered, setHasEntered] = useState(false);
+    const [showHint, setShowHint] = useState(false);
 
     // Search State
     const [searchQuery, setSearchQuery] = useState("");
@@ -150,6 +151,10 @@ export default function UniverseCanvas() {
             })
             .catch((err) => console.error("Tag zones fetch error:", err));
     }, []);
+
+    useEffect(() => {
+        if (hasEntered) setShowHint(true);
+    }, [hasEntered]);
 
     // 2. Responsive Canvas Sizing
     useEffect(() => {
@@ -585,6 +590,36 @@ export default function UniverseCanvas() {
         requestAnimationFrame(animateFlight);
     };
 
+    const jumpToPoint = (worldX: number, worldY: number) => {
+        if (!stageRef.current) return;
+
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        const targetScale = viewRef.current.scale;
+        const targetX = cx - worldX * targetScale;
+        const targetY = cy - worldY * targetScale;
+
+        const startX = viewRef.current.x;
+        const startY = viewRef.current.y;
+
+        const duration = 600;
+        const startTime = performance.now();
+
+        const animateFlight = (time: number) => {
+            const elapsed = time - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const ease = 1 - Math.pow(1 - progress, 3);
+
+            viewRef.current.x = startX + (targetX - startX) * ease;
+            viewRef.current.y = startY + (targetY - startY) * ease;
+
+            if (progress < 1) requestAnimationFrame(animateFlight);
+        };
+        zoomCooldownRef.current = performance.now() + duration + 500;
+        setShowHint(false);
+        requestAnimationFrame(animateFlight);
+    };
+
     const handleSearch = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!searchQuery.trim()) {
@@ -877,6 +912,14 @@ export default function UniverseCanvas() {
                 </div>
             )}
 
+            {showHint && (
+                <div className="absolute top-[7.5rem] left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+                    <p className="text-2xl text-zinc-400 font-mono animate-pulse">
+                        Click or drag to move around
+                    </p>
+                </div>
+            )}
+
             {/* Top Right: Search Bar */}
             <div className="absolute top-6 right-10 z-30 w-80">
                 <form onSubmit={handleSearch} className="relative">
@@ -1033,6 +1076,7 @@ export default function UniverseCanvas() {
                     isDraggingRef.current = true;
                     isInteractingRef.current = true;
                     setIsInteracting(true);
+                    setShowHint(false);
                 }}
                 onDragMove={(e) => {
                     viewRef.current.x = e.target.x();
@@ -1045,6 +1089,17 @@ export default function UniverseCanvas() {
                     viewRef.current.x = e.target.x();
                     viewRef.current.y = e.target.y();
                     zoomCooldownRef.current = performance.now() + 600;
+                }}
+                onClick={(e) => {
+                    if (isDraggingRef.current) return;
+                    const stage = e.target.getStage();
+                    if (!stage) return;
+                    const pointer = stage.getPointerPosition();
+                    if (!pointer) return;
+                    const scale = viewRef.current.scale;
+                    const worldX = (pointer.x - viewRef.current.x) / scale;
+                    const worldY = (pointer.y - viewRef.current.y) / scale;
+                    jumpToPoint(worldX, worldY);
                 }}
             >
                 {/* 
