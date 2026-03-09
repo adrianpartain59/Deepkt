@@ -7,19 +7,35 @@
 cd web && npm run dev                                        # Next.js frontend (port 3000)
 ```
 
+### Spotify Import (Local Dev)
+Spotify allows `http://127.0.0.1` for local development (no HTTPS needed):
+
+1. Add `http://127.0.0.1:8000/api/spotify/callback` as a Redirect URI in your [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+2. Set credentials in `.env`:
+   ```
+   SPOTIFY_CLIENT_ID=your_client_id
+   SPOTIFY_CLIENT_SECRET=your_client_secret
+   SPOTIFY_REDIRECT_URI=http://127.0.0.1:8000/api/spotify/callback
+   FRONTEND_URL=http://localhost:3000
+   ```
+3. Start the API (`python api.py`) and Next.js (`cd web && npm run dev`)
+4. Click "Sign In" in the app — you'll be redirected to Spotify to authorize
+
+**Note:** Spotify requires `127.0.0.1` (not `localhost`) for loopback redirect URIs. For production, use HTTPS.
+
 ## CLI Commands
 
 ### Pipeline (download + analyze in parallel)
 ```bash
-.venv/bin/python3.12 cli.py pipeline --file links.txt       # Process all URLs
+.venv/bin/python3.12 cli.py pipeline                        # Process all URLs
 .venv/bin/python3.12 cli.py pipeline --resume                # Resume after crash
 .venv/bin/python3.12 cli.py pipeline-status                  # Check progress
 ```
 
 ### Crawl & Ingest
 ```bash
-.venv/bin/python3.12 cli.py crawl                            # Scrape new URLs to crawled_links.txt
-.venv/bin/python3.12 cli.py ingest                           # Move URLs to links.txt for pipeline
+.venv/bin/python3.12 cli.py crawl                            # Scrape new URLs to data/pipeline/crawled_links.txt
+.venv/bin/python3.12 cli.py ingest                           # Move URLs to data/pipeline/links.txt
 ```
 
 ### Prune (Database Cleanup)
@@ -41,7 +57,7 @@ cd web && npm run dev                                        # Next.js frontend 
 
 ### Analysis & Indexing
 ```bash
-.venv/bin/python3.12 cli.py reindex                          # Rebuild ChromaDB search index (auto-fits whitening)
+.venv/bin/python3.12 cli.py reindex                          # Rebuild ChromaDB search index from raw embeddings
 .venv/bin/python3.12 cli.py optimize                         # Find optimal feature weights for matching artists
 ```
 
@@ -62,16 +78,14 @@ cd web && npm run dev                                        # Next.js frontend 
 ### Library Info
 ```bash
 .venv/bin/python3.12 cli.py stats                            # Library overview
-.venv/bin/python3.12 cli.py features                         # Show all 9 features
-.venv/bin/python3.12 cli.py inspect "HXVRMXN - Eclipse.mp3"  # All 43 feature values
-.venv/bin/python3.12 cli.py lab-status                       # Show Training Lab dataset stats
-.venv/bin/python3.12 cli.py lab-undo                         # Wipe all triplets for recent Anchor
+.venv/bin/python3.12 cli.py features                         # Show enabled features
+.venv/bin/python3.12 cli.py inspect "HXVRMXN - Eclipse.mp3"  # Feature values for a track
 ```
 *(To see the fully indexed map of how all tracks are grouped by Artist, view `docs/indexed_artists.md!)*
 
 ### Download Only
 ```bash
-.venv/bin/python3.12 cli.py download --file links.txt        # Download without analyzing
+.venv/bin/python3.12 cli.py download                         # Download without analyzing
 ```
 
 ## SQLite Direct Access

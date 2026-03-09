@@ -101,12 +101,7 @@ def analyze_and_store(data_dir=DEFAULT_DATA_DIR, db_path=DEFAULT_DB_PATH):
 # ============================================================
 
 def rebuild_search_index(db_path=DEFAULT_DB_PATH, db_dir=DEFAULT_DB_DIR):
-    """Rebuild ChromaDB search index from stored features in SQLite.
-
-    Automatically fits a mean-centering + PCA whitening transform from
-    the full corpus and applies it to all embeddings before indexing.
-    The transform is saved to data/whitening_transform.npz for use at
-    query time. Raw embeddings in SQLite are never modified.
+    """Rebuild ChromaDB search index from raw features stored in SQLite.
 
     Args:
         db_path: Path to SQLite database.
@@ -115,13 +110,6 @@ def rebuild_search_index(db_path=DEFAULT_DB_PATH, db_dir=DEFAULT_DB_DIR):
     Returns:
         ChromaDB Collection with the new search index.
     """
-    from deepkt import whitening
-
-    # Invalidate any cached whitening so we read raw embeddings below
-    whitening.clear_cache()
-    if os.path.exists(whitening.DEFAULT_TRANSFORM_PATH):
-        os.remove(whitening.DEFAULT_TRANSFORM_PATH)
-
     conn = trackdb.get_db(db_path)
 
     # Wipe and recreate the collection
@@ -145,7 +133,6 @@ def rebuild_search_index(db_path=DEFAULT_DB_PATH, db_dir=DEFAULT_DB_DIR):
     print(f"Enabled features: {', '.join(enabled)} ({search_dims} dims)")
     print(f"Feature version: {version}\n")
 
-    # Phase 1: collect raw embeddings (whitening is cleared, so build_search_vector returns raw)
     raw_ids = []
     raw_vectors = []
     raw_metadatas = []
@@ -168,23 +155,13 @@ def rebuild_search_index(db_path=DEFAULT_DB_PATH, db_dir=DEFAULT_DB_DIR):
             "url": track.get("url", ""),
         })
 
-    # Phase 2: fit whitening transform from the full corpus
-    if len(raw_vectors) >= 20:
-        print(f"Fitting whitening transform on {len(raw_vectors)} embeddings...")
-        whitening.fit_and_save(raw_vectors)
-        print("Whitening transform fitted and saved.\n")
-    else:
-        print(f"Skipping whitening: need >= 20 tracks (have {len(raw_vectors)}).\n")
-
-    # Phase 3: apply whitening and batch-insert into ChromaDB
-    whitened = whitening.apply(raw_vectors) if raw_vectors else []
-
+    # Batch-insert into ChromaDB
     batch_size = 100
     for start in range(0, len(raw_ids), batch_size):
         end = min(start + batch_size, len(raw_ids))
         collection.add(
             ids=raw_ids[start:end],
-            embeddings=whitened[start:end],
+            embeddings=raw_vectors[start:end],
             metadatas=raw_metadatas[start:end],
         )
 

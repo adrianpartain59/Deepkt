@@ -9,7 +9,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from deepkt import db as trackdb
 
 CRAWLER_STATE_FILE = "data/crawler_state.json"
-CRAWLED_LINKS_FILE = "crawled_links.txt"
+CRAWLED_LINKS_FILE = "data/pipeline/crawled_links.txt"
 DEFAULT_DB_PATH = "data/tracks.db"
 MAX_URLS = 10000
 
@@ -124,6 +124,23 @@ class SoundCloudSpider:
                 return []
 
         url = (f'https://api-v2.soundcloud.com/search/playlists'
+               f'?q={query}&client_id={self.client_id}&limit={limit}')
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+        if res.status_code == 200:
+            return res.json().get('collection', [])
+        return []
+
+    def search_tracks(self, query, limit=5):
+        """Search SoundCloud for tracks matching a query.
+
+        Each result includes a 'user' dict with the artist's profile info
+        (permalink_url, username, id, etc.) and track metadata (title, etc.).
+        """
+        if not self.client_id:
+            if not self.extract_client_id():
+                return []
+
+        url = (f'https://api-v2.soundcloud.com/search/tracks'
                f'?q={query}&client_id={self.client_id}&limit={limit}')
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
         if res.status_code == 200:
@@ -286,7 +303,7 @@ class SoundCloudSpider:
         results = set()
         
         # Original seeds
-        seed_file = "seed_artists.txt"
+        seed_file = "data/pipeline/seed_artists.txt"
         if os.path.exists(seed_file):
             with open(seed_file, 'r') as f:
                 for line in f:
@@ -297,7 +314,7 @@ class SoundCloudSpider:
             self.console.print(f"[bold yellow]Warning: {seed_file} not found![/bold yellow]")
             
         # Newly promoted discovery seeds
-        discovery_file = "discovery_seeds.txt"
+        discovery_file = "data/pipeline/discovery_seeds.txt"
         if os.path.exists(discovery_file):
             with open(discovery_file, 'r') as f:
                 for line in f:
@@ -315,7 +332,7 @@ class SoundCloudSpider:
              return
              
         seeds = self.get_seed_artists()
-        self.console.print(f"Loaded [bold cyan]{len(seeds)}[/bold cyan] unique Seed Artists from seed_artists.txt.\n")
+        self.console.print(f"Loaded [bold cyan]{len(seeds)}[/bold cyan] unique Seed Artists.\n")
         
         new_url_count = 0
         

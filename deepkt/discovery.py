@@ -32,8 +32,8 @@ from deepkt.config import load_pipeline_config
 
 console = Console()
 
-KEYWORDS_FILE = "hashtags.txt"
-EXCLUDE_KEYWORDS_FILE = "exclude_keywords.txt"
+KEYWORDS_FILE = "data/pipeline/hashtags.txt"
+EXCLUDE_KEYWORDS_FILE = "data/pipeline/exclude_keywords.txt"
 
 
 # ============================================================
@@ -308,10 +308,7 @@ def compute_seed_centroid(conn, seed_urls):
     
     refined_path = 'data/refined_seed_centroid.npy'
     if os.path.exists(refined_path):
-        centroid = np.load(refined_path)
-        # Whiten and re-normalize to match the whitened embedding space
-        from deepkt.whitening import apply as whiten
-        centroid = np.array(whiten(centroid.tolist()), dtype=np.float32)
+        centroid = np.load(refined_path).astype(np.float32)
         norm = np.linalg.norm(centroid)
         if norm > 0:
             centroid = centroid / norm
@@ -391,10 +388,6 @@ def similarity_gate(probe_vectors, probe_urls, candidate_url, conn, threshold=0.
     if centroid_normed is None:
         console.print("      [bold yellow]Warning: No indexed tracks in corpus. Cannot gate.[/bold yellow]")
         return 0.0, False
-
-    # Probe vectors come from analyze_snippet (raw); whiten to match the centroid space
-    from deepkt.whitening import apply as whiten
-    probe_vectors = [whiten(v) for v in probe_vectors]
 
     similarities = []
 

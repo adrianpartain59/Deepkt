@@ -35,8 +35,7 @@
 - `data/` directory (SQLite DB, ChromaDB, audio files, logs)
 - `.venv/` or any virtual environment files
 - `.env` or secrets/API keys
-- `links.txt`, `links2.txt`, `crawled_links.txt` (contain scraped URLs)
-- `seed_artists.txt` (personal curation list)
+- `data/pipeline/` files (links, seed artists, crawled URLs)
 - Any `.mp3`, `.wav`, or audio files
 - Pipeline logs (`*.log`)
 
@@ -59,20 +58,6 @@ git push dev main:personal-dev
 
 > [!IMPORTANT]
 > The command `git push dev main:personal-dev` pushes the local `main` branch directly to the `dev` remote's `personal-dev` branch **without ever switching branches locally**. This protects `data/tracks.db` from being deleted.
-
-### Push `links.txt` to Dev (ALWAYS do this after every push)
-
-`links.txt` contains all crawled and discovered track URLs. It is **excluded from origin** (public) but must **always be pushed to dev** (private) so it is backed up.
-
-```bash
-# After the main push, always do:
-git add links.txt
-git commit -m "chore: update links.txt"
-git push dev main:personal-dev
-```
-
-> [!CAUTION]
-> Do **NOT** push `links.txt` to `origin`. Do **NOT** skip this step — `links.txt` is the single source of all discovered track URLs and cannot be rebuilt.
 
 ### Push Personal Data (Dev Repo Only)
 If you have generated valuable personal data (e.g., Training Lab triplets in `data/tracks.db`) or have large files that would take a long time to retrieve/rebuild, you should back them up **exclusively** to the private dev repository.
@@ -100,7 +85,7 @@ git push dev main:personal-dev
 The `.gitignore` blocks `data/` entirely. This is intentional — database files should never be committed. If the database is lost, it can be fully rebuilt:
 
 ```bash
-python cli.py pipeline --file links.txt   # Re-download and analyze all tracks
+python cli.py pipeline                      # Re-download and analyze all tracks
 python cli.py reindex                       # Rebuild ChromaDB search index
 ```
 

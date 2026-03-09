@@ -85,6 +85,33 @@ def _init_tables(conn):
             created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS users (
+            id              TEXT PRIMARY KEY,
+            email           TEXT UNIQUE NOT NULL,
+            display_name    TEXT,
+            password_hash   TEXT,
+            auth_provider   TEXT DEFAULT 'email',
+            provider_id     TEXT,
+            refresh_token   TEXT,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS projects (
+            id          TEXT PRIMARY KEY,
+            user_id     TEXT NOT NULL REFERENCES users(id),
+            slot        INTEGER NOT NULL,
+            name        TEXT NOT NULL,
+            playlist_urls TEXT DEFAULT '[]',
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, slot)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_provider
+            ON users(auth_provider, provider_id) WHERE provider_id IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
         CREATE INDEX IF NOT EXISTS idx_status ON tracks(status);
         CREATE INDEX IF NOT EXISTS idx_artist ON tracks(artist);
         CREATE INDEX IF NOT EXISTS idx_pairs ON training_pairs(anchor_id, candidate_id);
@@ -105,7 +132,7 @@ def save_training_label(conn, anchor_id, candidate_id, label):
     """Save a triplet label (1=positive, 0=negative) to the database."""
     try:
         conn.execute(
-            """INSERT INTO training_pairs (anchor_id, candidate_id, label) 
+            """INSERT INTO training_pairs (anchor_id, candidate_id, label)
                VALUES (?, ?, ?)""",
             (anchor_id, candidate_id, label)
         )
@@ -313,22 +340,6 @@ def get_all_features(conn):
     return results
 
 
-def get_tracks_missing_features(conn):
-    """Find tracks that have been analyzed but are missing some extractors.
-
-    Useful when new extractors are added and old tracks need re-analysis.
-
-    Returns:
-        List of track IDs.
-    """
-    from deepkt.features import ALL_EXTRACTOR_NAMES
-    expected_count = len(ALL_EXTRACTOR_NAMES)
-
-    rows = conn.execute(
-        "SELECT track_id FROM track_features WHERE extractor_count < ?",
-        (expected_count,)
-    ).fetchall()
-    return [row["track_id"] for row in rows]
 
 
 # ============================================================

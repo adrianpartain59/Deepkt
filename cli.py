@@ -2,7 +2,7 @@
 Deepkt CLI — Command-line interface for pipeline operations.
 
 Usage:
-    python cli.py download              Download snippets from links.txt
+    python cli.py download              Download snippets from data/pipeline/links.txt
     python cli.py analyze               Analyze MP3s → store ALL features in SQLite
     python cli.py reindex               Rebuild ChromaDB search index from stored features
     python cli.py pipeline              Download + analyze in parallel
@@ -412,37 +412,40 @@ def cmd_crawl(args):
 def cmd_ingest(args):
     """Move URLs from crawled_links.txt to links.txt for processing."""
     import os
-    if not os.path.exists("crawled_links.txt"):
-        print("❌ No crawled_links.txt found. Run 'cli.py crawl' first.")
+    from deepkt.crawler import CRAWLED_LINKS_FILE
+    links_file = "data/pipeline/links.txt"
+    if not os.path.exists(CRAWLED_LINKS_FILE):
+        print(f"❌ No {CRAWLED_LINKS_FILE} found. Run 'cli.py crawl' first.")
         return
-        
-    with open("crawled_links.txt", "r") as f:
+
+    with open(CRAWLED_LINKS_FILE, "r") as f:
         new_links = [line.strip() for line in f if line.strip()]
-        
+
     if not new_links:
-        print("❌ crawled_links.txt is empty.")
+        print(f"❌ {CRAWLED_LINKS_FILE} is empty.")
         return
-        
-    # Read existing links to prevent duplicates in links.txt
+
+    # Read existing links to prevent duplicates
     existing = set()
-    if os.path.exists("links.txt"):
-        with open("links.txt", "r") as f:
+    if os.path.exists(links_file):
+        with open(links_file, "r") as f:
             for line in f:
                 if line.strip():
                     existing.add(line.strip())
-                    
+
     added = 0
-    with open("links.txt", "a") as f:
+    os.makedirs(os.path.dirname(links_file), exist_ok=True)
+    with open(links_file, "a") as f:
         for link in new_links:
             if link not in existing:
                 f.write(f"{link}\n")
                 existing.add(link)
                 added += 1
-                
+
     # Clear crawled_links.txt
-    open("crawled_links.txt", "w").close()
-    
-    print(f"✅ Ingested {added} new links into links.txt.")
+    open(CRAWLED_LINKS_FILE, "w").close()
+
+    print(f"✅ Ingested {added} new links into {links_file}.")
     print("💡 Run 'cli.py pipeline' to begin downloading and analyzing.")
 
 
@@ -613,7 +616,7 @@ def cmd_prune(args):
             # Open a log file to keep track of pruned tracks
             import os
             from datetime import datetime
-            log_path = "pruned_tracks.txt"
+            log_path = "data/pipeline/pruned_tracks.txt"
             deleted_urls = set()
 
             with open(log_path, "a", encoding="utf-8") as f:
@@ -640,10 +643,10 @@ def cmd_prune(args):
                     deleted += 1
             
             # Remove deleted URLs from links.txt
-            if os.path.exists("links.txt") and deleted_urls:
-                with open("links.txt", "r") as f:
+            if os.path.exists("data/pipeline/links.txt") and deleted_urls:
+                with open("data/pipeline/links.txt", "r") as f:
                     links = f.readlines()
-                with open("links.txt", "w") as f:
+                with open("data/pipeline/links.txt", "w") as f:
                     for link in links:
                         if link.strip() not in deleted_urls:
                             f.write(link)
@@ -676,7 +679,7 @@ def main():
 
     # --- download ---
     dl = subparsers.add_parser("download", help="Download snippets from links file")
-    dl.add_argument("--file", default="links.txt", help="Path to links file")
+    dl.add_argument("--file", default="data/pipeline/links.txt", help="Path to links file")
     dl.add_argument("--output", default="data/raw_snippets", help="Output directory")
     dl.set_defaults(func=cmd_download)
 
@@ -726,7 +729,7 @@ def main():
 
     # --- pipeline ---
     pipe = subparsers.add_parser("pipeline", help="Download + analyze in parallel")
-    pipe.add_argument("--file", default="links.txt", help="Path to links file")
+    pipe.add_argument("--file", default="data/pipeline/links.txt", help="Path to links file")
     pipe.add_argument("--resume", action="store_true", help="Resume interrupted pipeline")
     pipe.set_defaults(func=cmd_pipeline)
 
@@ -739,7 +742,7 @@ def main():
     crl.set_defaults(func=cmd_crawl)
 
     # --- ingest ---
-    ing = subparsers.add_parser("ingest", help="Move approved URLs from crawled_links.txt into links.txt")
+    ing = subparsers.add_parser("ingest", help="Move approved URLs from crawled_links.txt into data/pipeline/links.txt")
     ing.set_defaults(func=cmd_ingest)
 
     # --- prune ---

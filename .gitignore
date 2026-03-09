@@ -2,16 +2,17 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
+.cache/
 # Ignore all data by default
 data/
-# But keep the directory itself if needed (usually handled by gitkeep but for now ignore recursive content)
-!data/.gitkeep
+# But track pipeline input files
+!data/pipeline/
+!data/pipeline/*
 # Explicitly ignore generated artifacts
 output/
 downloads/
 # Logs
 *.log
-pipeline.log
 # Env
 .env
 # Test artifacts

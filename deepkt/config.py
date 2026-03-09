@@ -83,16 +83,6 @@ def get_enabled_features(config_path=DEFAULT_CONFIG_PATH):
     return sorted(enabled)
 
 
-def get_all_feature_names():
-    """Return sorted list of ALL feature names (for full store).
-
-    These are all extractors that run during analysis, regardless
-    of whether they're enabled for search.
-    """
-    from deepkt.features import ALL_EXTRACTOR_NAMES
-    return ALL_EXTRACTOR_NAMES
-
-
 def get_feature_weights(config_path=DEFAULT_CONFIG_PATH):
     """Return dict of feature_name → weight for enabled features.
 

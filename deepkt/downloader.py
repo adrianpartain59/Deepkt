@@ -117,7 +117,7 @@ def download_snippets(urls, output_dir="data/raw_snippets", quiet=False):
         ydl.download(urls)
 
 
-def download_from_file(links_file="links.txt", output_dir="data/raw_snippets"):
+def download_from_file(links_file="data/pipeline/links.txt", output_dir="data/raw_snippets"):
     """Read URLs from a text file and download snippets.
 
     Args:

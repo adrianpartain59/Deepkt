@@ -1,22 +1,38 @@
+import hashlib
 import json
 import os
 import statistics
+import threading
+import uuid
 from collections import defaultdict
+from datetime import datetime, timezone
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
 from deepkt import db as trackdb
 from deepkt.downloader import download_single
+from deepkt.auth import (
+    hash_password, verify_password,
+    create_access_token, create_refresh_token, decode_token,
+    get_current_user, optional_current_user, UserClaims,
+    create_user, get_user_by_email, get_user_by_provider,
+    get_user_by_id, store_refresh_token, revoke_refresh_token,
+    link_oauth_provider, google_oauth_exchange,
+)
+
+load_dotenv()
 
 app = FastAPI(title="HyperPhonk API")
 
 _cors_origins = [
     "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
 _extra = os.environ.get("CORS_ORIGINS", "")
 if _extra:
@@ -29,6 +45,194 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate limiting
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ---------------------------------------------------------------------------
+# Auth Endpoints
+# ---------------------------------------------------------------------------
+
+MIN_PASSWORD_LENGTH = 8
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    display_name: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+def _issue_tokens(user: dict) -> dict:
+    """Create access + refresh tokens for a user and store refresh in DB."""
+    access = create_access_token(user["id"], user["email"])
+    refresh, hashed_jti = create_refresh_token(user["id"])
+    store_refresh_token(user["id"], hashed_jti)
+    return {
+        "access_token": access,
+        "refresh_token": refresh,
+        "token_type": "bearer",
+        "user": {
+            "id": user["id"],
+            "email": user["email"],
+            "display_name": user.get("display_name"),
+            "auth_provider": user.get("auth_provider", "email"),
+        },
+    }
+
+
+@app.post("/api/auth/register")
+@limiter.limit("3/minute")
+def register(req: RegisterRequest, request: Request):
+    if len(req.password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(status_code=400, detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
+    if not req.email or "@" not in req.email:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+
+    existing = get_user_by_email(req.email)
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    user = create_user(
+        email=req.email,
+        display_name=req.display_name or req.email.split("@")[0],
+        password=req.password,
+        auth_provider="email",
+    )
+    return _issue_tokens(user)
+
+
+@app.post("/api/auth/login")
+@limiter.limit("5/minute")
+def login(req: LoginRequest, request: Request):
+    user = get_user_by_email(req.email)
+    if not user or not user.get("password_hash"):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not verify_password(req.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    return _issue_tokens(user)
+
+
+@app.post("/api/auth/refresh")
+def refresh_tokens(req: RefreshRequest):
+    try:
+        payload = decode_token(req.refresh_token)
+        if payload.get("type") != "refresh":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+    user = get_user_by_id(payload["sub"])
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Verify the jti matches what's stored
+    jti = payload.get("jti", "")
+    hashed_jti = hashlib.sha256(jti.encode()).hexdigest()
+    if user.get("refresh_token") != hashed_jti:
+        raise HTTPException(status_code=401, detail="Refresh token revoked")
+
+    return _issue_tokens(user)
+
+
+@app.post("/api/auth/logout")
+def logout(user: UserClaims = Depends(get_current_user)):
+    revoke_refresh_token(user.user_id)
+    return {"status": "logged_out"}
+
+
+@app.get("/api/auth/me")
+def get_me(user: UserClaims = Depends(get_current_user)):
+    full_user = get_user_by_id(user.user_id)
+    if not full_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "id": full_user["id"],
+        "email": full_user["email"],
+        "display_name": full_user.get("display_name"),
+        "auth_provider": full_user.get("auth_provider"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Google OAuth
+# ---------------------------------------------------------------------------
+
+@app.get("/api/auth/google/login")
+def google_login():
+    client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8000/api/auth/google/callback")
+    if not client_id:
+        raise HTTPException(status_code=503, detail="Google OAuth not configured")
+    url = (
+        f"https://accounts.google.com/o/oauth2/v2/auth"
+        f"?client_id={client_id}"
+        f"&redirect_uri={redirect_uri}"
+        f"&response_type=code"
+        f"&scope=openid%20email%20profile"
+        f"&access_type=offline"
+    )
+    return RedirectResponse(url=url)
+
+
+@app.get("/api/auth/google/callback")
+async def google_callback(code: str):
+    from fastapi.responses import HTMLResponse
+    frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    try:
+        info = await google_oauth_exchange(code)
+        # Find or create user
+        user = get_user_by_provider("google", info["provider_id"])
+        if not user:
+            existing = get_user_by_email(info["email"])
+            if existing:
+                link_oauth_provider(existing["id"], "google", info["provider_id"])
+                user = existing
+            else:
+                user = create_user(
+                    email=info["email"],
+                    display_name=info.get("name", ""),
+                    auth_provider="google",
+                    provider_id=info["provider_id"],
+                )
+        tokens = _issue_tokens(user)
+        # PostMessage tokens back to opener
+        return HTMLResponse(f"""<!DOCTYPE html><html><body><script>
+            if (window.opener) {{
+                window.opener.postMessage({{
+                    type: "auth-callback",
+                    access_token: "{tokens['access_token']}",
+                    refresh_token: "{tokens['refresh_token']}",
+                    user: {json.dumps(tokens['user'])}
+                }}, "{frontend_url}");
+                window.close();
+            }} else {{
+                document.body.innerText = "Authenticated! You can close this window.";
+            }}
+        </script><p>Authenticating...</p></body></html>""")
+    except Exception as e:
+        return HTMLResponse(f"""<!DOCTYPE html><html><body><script>
+            if (window.opener) {{
+                window.opener.postMessage({{ type: "auth-callback", error: "{str(e)}" }}, "{frontend_url}");
+                window.close();
+            }}
+        </script><p>Authentication failed: {str(e)}</p></body></html>""")
+
+
 
 class UniverseNode(BaseModel):
     id: str
@@ -105,15 +309,16 @@ class SimilarTrack(BaseModel):
 _sim_matrix: Optional[np.ndarray] = None
 _sim_ids: Optional[list] = None
 _sim_id_to_idx: Optional[dict] = None
+_sim_artists: Optional[dict] = None
 
 def _build_similarity_index():
-    global _sim_matrix, _sim_ids, _sim_id_to_idx
+    global _sim_matrix, _sim_ids, _sim_id_to_idx, _sim_artists
     if _sim_matrix is not None:
         return
 
     conn = trackdb.get_db()
     rows = conn.execute('''
-        SELECT tf.track_id, tf.feature_data
+        SELECT tf.track_id, t.artist, tf.feature_data
         FROM track_features tf
         JOIN tracks t ON tf.track_id = t.id
         WHERE t.x IS NOT NULL AND t.status IN ('DOWNLOADED', 'INDEXED')
@@ -121,31 +326,36 @@ def _build_similarity_index():
     conn.close()
 
     ids = []
+    artists = []
     vectors = []
     for row in rows:
-        features = json.loads(row[1])
+        features = json.loads(row[2])
         embedding = features.get("clap_embedding")
         if embedding and len(embedding) == 512:
             ids.append(row[0])
+            artists.append(row[1] or "")
             vectors.append(embedding)
 
     if not vectors:
         return
 
     mat = np.array(vectors, dtype=np.float32)
-    from deepkt.whitening import apply as whiten
-    mat = np.asarray(whiten(mat), dtype=np.float32)
     norms = np.linalg.norm(mat, axis=1, keepdims=True)
     norms[norms == 0] = 1
     _sim_matrix = mat / norms
     _sim_ids = ids
     _sim_id_to_idx = {tid: i for i, tid in enumerate(ids)}
+    _sim_artists = {tid: artists[i] for i, tid in enumerate(ids)}
 
 @app.get("/api/neighbors/{track_id}", response_model=List[SimilarTrack])
-def get_neighbors(track_id: str):
+def get_neighbors(track_id: str, artist_boost: float = 0.15):
     """
     Returns the 10 most sonically similar tracks using cosine similarity
     on the full 512-dimensional CLAP embeddings (pre-UMAP).
+
+    artist_boost: 0-1. Adds this amount to same-artist tracks to surface
+    more from the same artist (e.g. HXVRMXN - HIGH ABOVE → HI-END 2000).
+    Default 0.15. Set to 0 to disable.
     """
     _build_similarity_index()
 
@@ -153,8 +363,26 @@ def get_neighbors(track_id: str):
         raise HTTPException(status_code=404, detail="Track embedding not found")
 
     idx = _sim_id_to_idx[track_id]
+    query_artist = _sim_artists.get(track_id, "")
+
     similarities = _sim_matrix @ _sim_matrix[idx]
-    top_indices = np.argsort(similarities)[::-1][:11]
+    # Fetch more candidates so we can re-rank with artist boost
+    n_candidates = 50 if artist_boost > 0 else 11
+    top_indices = np.argsort(similarities)[::-1][:n_candidates]
+
+    # Apply artist boost: same-artist tracks get a boost
+    if artist_boost > 0 and query_artist:
+        boosted = []
+        for i in top_indices:
+            sid = _sim_ids[i]
+            if sid == track_id:
+                continue
+            sim = float(similarities[i])
+            if _sim_artists.get(sid, "") == query_artist:
+                sim += artist_boost
+            boosted.append((i, sim))
+        boosted.sort(key=lambda x: x[1], reverse=True)
+        top_indices = [x[0] for x in boosted][:11]
 
     conn = trackdb.get_db()
     results = []
@@ -293,6 +521,235 @@ def get_track_audio(track_id: str):
             raise HTTPException(status_code=500, detail=f"Failed to download audio: {str(e)}")
             
     return FileResponse(file_path, media_type="audio/mpeg", headers={"Accept-Ranges": "bytes"})
+
+# ---------------------------------------------------------------------------
+# Projects (per-user, SQL-backed)
+# ---------------------------------------------------------------------------
+
+MAX_PROJECT_SLOTS = 5
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    slot: int  # 1-5
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    playlist_urls: Optional[List[str]] = None
+
+
+def _load_user_project(user_id: str, slot: int) -> Optional[dict]:
+    conn = trackdb.get_db()
+    row = conn.execute(
+        "SELECT * FROM projects WHERE user_id = ? AND slot = ?", (user_id, slot)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    d["playlist_urls"] = json.loads(d.get("playlist_urls", "[]"))
+    return d
+
+
+def _save_user_project(user_id: str, slot: int, name: str, playlist_urls: list):
+    conn = trackdb.get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    existing = conn.execute(
+        "SELECT id FROM projects WHERE user_id = ? AND slot = ?", (user_id, slot)
+    ).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE projects SET name = ?, playlist_urls = ?, updated_at = ? WHERE user_id = ? AND slot = ?",
+            (name, json.dumps(playlist_urls), now, user_id, slot),
+        )
+    else:
+        project_id = uuid.uuid4().hex
+        conn.execute(
+            "INSERT INTO projects (id, user_id, slot, name, playlist_urls, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (project_id, user_id, slot, name, json.dumps(playlist_urls), now, now),
+        )
+    conn.commit()
+    conn.close()
+
+
+@app.get("/api/projects")
+def list_projects(user: UserClaims = Depends(get_current_user)):
+    """Returns all 5 project slots for the current user (null if empty)."""
+    slots = []
+    for i in range(1, MAX_PROJECT_SLOTS + 1):
+        proj = _load_user_project(user.user_id, i)
+        slots.append({"slot": i, "project": proj})
+    return slots
+
+
+@app.get("/api/projects/{slot}")
+def get_project(slot: int, user: UserClaims = Depends(get_current_user)):
+    if slot < 1 or slot > MAX_PROJECT_SLOTS:
+        raise HTTPException(status_code=400, detail=f"Slot must be 1-{MAX_PROJECT_SLOTS}")
+    proj = _load_user_project(user.user_id, slot)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Empty slot")
+    return proj
+
+
+@app.post("/api/projects")
+def create_project(req: ProjectCreate, user: UserClaims = Depends(get_current_user)):
+    if req.slot < 1 or req.slot > MAX_PROJECT_SLOTS:
+        raise HTTPException(status_code=400, detail=f"Slot must be 1-{MAX_PROJECT_SLOTS}")
+    if not req.name.strip():
+        raise HTTPException(status_code=400, detail="Project name is required")
+    existing = _load_user_project(user.user_id, req.slot)
+    if existing:
+        raise HTTPException(status_code=409, detail="Slot already occupied")
+    _save_user_project(user.user_id, req.slot, req.name.strip(), [])
+    return _load_user_project(user.user_id, req.slot)
+
+
+@app.patch("/api/projects/{slot}")
+def update_project(slot: int, req: ProjectUpdate, user: UserClaims = Depends(get_current_user)):
+    if slot < 1 or slot > MAX_PROJECT_SLOTS:
+        raise HTTPException(status_code=400, detail=f"Slot must be 1-{MAX_PROJECT_SLOTS}")
+    proj = _load_user_project(user.user_id, slot)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Empty slot")
+    name = req.name.strip() if req.name is not None else proj["name"]
+    urls = req.playlist_urls if req.playlist_urls is not None else proj["playlist_urls"]
+    _save_user_project(user.user_id, slot, name, urls)
+    return _load_user_project(user.user_id, slot)
+
+
+@app.delete("/api/projects/{slot}")
+def delete_project(slot: int, user: UserClaims = Depends(get_current_user)):
+    if slot < 1 or slot > MAX_PROJECT_SLOTS:
+        raise HTTPException(status_code=400, detail=f"Slot must be 1-{MAX_PROJECT_SLOTS}")
+    conn = trackdb.get_db()
+    conn.execute("DELETE FROM projects WHERE user_id = ? AND slot = ?", (user.user_id, slot))
+    conn.commit()
+    conn.close()
+    return {"status": "deleted", "slot": slot}
+
+
+# ---------------------------------------------------------------------------
+# Spotify OAuth + Playlist Import
+# ---------------------------------------------------------------------------
+
+_import_progress: dict[str, object] = {}  # keyed by user_id
+_import_lock = threading.Lock()
+
+
+class SpotifyImportRequest(BaseModel):
+    playlist_ids: List[str]
+    project_slot: Optional[int] = None
+
+
+@app.get("/api/spotify/login")
+def spotify_login():
+    from deepkt.spotify import get_auth_url
+    return RedirectResponse(url=get_auth_url())
+
+
+@app.get("/api/spotify/callback")
+def spotify_callback(code: str):
+    from fastapi.responses import HTMLResponse
+    from deepkt.spotify import handle_callback
+    success = handle_callback(code)
+    status = "connected" if success else "error"
+    return HTMLResponse(f"""<!DOCTYPE html><html><body><script>
+        if (window.opener) {{
+            window.opener.postMessage({{ type: "spotify-auth", status: "{status}" }}, "*");
+            window.close();
+        }} else {{
+            window.location.href = "{os.environ.get("FRONTEND_URL", "http://localhost:3000")}?spotify={status}";
+        }}
+    </script><p>Authenticating... you can close this window.</p></body></html>""")
+
+
+@app.post("/api/spotify/logout")
+def spotify_logout(user: UserClaims = Depends(get_current_user)):
+    """Clear the cached Spotify token."""
+    from deepkt.spotify import logout
+    logout()
+    return {"status": "logged_out"}
+
+
+@app.get("/api/spotify/auth-check")
+def spotify_auth_check():
+    """Lightweight check: is the backend holding a valid Spotify token?"""
+    from deepkt.spotify import is_authenticated
+    return {"authenticated": is_authenticated()}
+
+
+@app.get("/api/spotify/playlists")
+def spotify_playlists(user: UserClaims = Depends(get_current_user)):
+    from deepkt.spotify import is_authenticated, get_user_playlists
+    if not is_authenticated():
+        raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+    try:
+        return get_user_playlists()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Spotify API error: {e}")
+
+
+@app.post("/api/spotify/import")
+def spotify_import(req: SpotifyImportRequest, user: UserClaims = Depends(get_current_user)):
+    from deepkt.spotify import is_authenticated, get_playlist_tracks
+    from deepkt.cross_reference import CrossRefProgress
+
+    if not is_authenticated():
+        raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
+
+    with _import_lock:
+        existing = _import_progress.get(user.user_id)
+        if existing and existing.state == "running":
+            raise HTTPException(status_code=409, detail="Import already in progress")
+
+    all_tracks: list[dict] = []
+    for pid in req.playlist_ids:
+        try:
+            tracks = get_playlist_tracks(pid)
+            print(f"[import] playlist {pid}: {len(tracks)} tracks")
+            all_tracks.extend(tracks)
+        except Exception as e:
+            print(f"[import] playlist {pid} failed: {e}")
+
+    if not all_tracks:
+        raise HTTPException(status_code=400, detail="No tracks found in the selected playlists")
+
+    progress = CrossRefProgress()
+
+    project_slot = req.project_slot
+    uid = user.user_id
+
+    def _run():
+        from deepkt.cross_reference import cross_reference_tracks, save_seed_artists
+        cross_reference_tracks(all_tracks, rate_limit=1.0, progress=progress)
+        save_seed_artists(progress)
+        # Save matched artist URLs to project if a slot was specified
+        if project_slot and 1 <= project_slot <= MAX_PROJECT_SLOTS:
+            proj = _load_user_project(uid, project_slot)
+            if proj:
+                existing_urls = set(proj.get("playlist_urls", []))
+                for m in progress.matched:
+                    existing_urls.add(m["sc_url"])
+                _save_user_project(uid, project_slot, proj["name"], list(existing_urls))
+
+    with _import_lock:
+        _import_progress[user.user_id] = progress
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    return {"status": "started", "total_tracks": len(all_tracks)}
+
+
+@app.get("/api/spotify/status")
+def spotify_status(user: UserClaims = Depends(get_current_user)):
+    progress = _import_progress.get(user.user_id)
+    if progress is None:
+        return {"state": "idle", "total": 0, "processed": 0, "matched_count": 0, "unmatched_count": 0, "matched": [], "unmatched": []}
+    return progress.to_dict()
+
 
 if __name__ == "__main__":
     import uvicorn

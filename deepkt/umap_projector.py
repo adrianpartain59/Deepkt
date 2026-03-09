@@ -28,9 +28,8 @@ def calculate_neighborhood_hit_rate(high_dim, low_dim, k=10):
 def generate_umap_map(n_neighbors=500, min_dist=0.15, spread=2.0, metric='cosine'):
     console.print("\n[bold magenta]🌌 Initializing Global-Structure 2D Map Generation...[/bold magenta]")
     
-    # Read raw embeddings from SQLite (not whitened ChromaDB) so PCA can
-    # denoise effectively — whitened embeddings amplify noise dimensions
-    # which degrades UMAP's nearest-neighbor graph.
+    # Read raw embeddings from SQLite; PCA is applied for denoising
+    # before UMAP projection.
     conn = trackdb.get_db()
     rows = conn.execute('''
         SELECT tf.track_id, tf.feature_data

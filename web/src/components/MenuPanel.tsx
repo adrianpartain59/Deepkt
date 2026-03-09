@@ -1,9 +1,10 @@
 "use client";
 
 import React from "react";
-import { FaCompass, FaPlus, FaInfoCircle, FaCog, FaTimes } from "react-icons/fa";
+import { FaCompass, FaPlus, FaInfoCircle, FaCog, FaTimes, FaUser, FaSignOutAlt } from "react-icons/fa";
+import useAuthStore from "@/stores/authStore";
 
-export type PageTab = "explore" | "create" | "about";
+export type PageTab = "explore" | "create" | "about" | "auth";
 
 interface MenuPanelProps {
     isOpen: boolean;
@@ -20,6 +21,8 @@ const NAV_ITEMS: { key: PageTab; label: string; icon: React.ComponentType<{ size
 ];
 
 export default function MenuPanel({ isOpen, onClose, activeTab, onNavigate, onSettings }: MenuPanelProps) {
+    const { user, logout } = useAuthStore();
+
     return (
         <>
             {/* Backdrop */}
@@ -79,9 +82,51 @@ export default function MenuPanel({ isOpen, onClose, activeTab, onNavigate, onSe
                     })}
                 </nav>
 
-                {/* Bottom: Settings */}
+                {/* Bottom: User info + Settings */}
                 <div className="px-3 pb-6">
                     <div className="border-t border-white/10 mx-1 mb-3" />
+
+                    {user ? (
+                        <div className="mb-3">
+                            <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-white/5">
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#e040fb] to-[#00e5ff] flex items-center justify-center text-black text-xs font-bold">
+                                    {(user.display_name || user.email)[0].toUpperCase()}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm text-white font-mono truncate">
+                                        {user.display_name || user.email.split("@")[0]}
+                                    </p>
+                                    <p className="text-xs text-zinc-500 font-mono truncate">{user.email}</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={async () => {
+                                    await logout();
+                                    onClose();
+                                }}
+                                className="flex items-center gap-3 px-4 py-2 mt-1 rounded-lg text-sm font-mono tracking-wider text-zinc-500 hover:bg-white/5 hover:text-red-400 transition-all w-full"
+                            >
+                                <FaSignOutAlt size={14} />
+                                SIGN OUT
+                            </button>
+                        </div>
+                    ) : (
+                        <button
+                            onClick={() => {
+                                onNavigate("auth");
+                                onClose();
+                            }}
+                            className={`flex items-center gap-3 px-4 py-3 mb-3 rounded-lg text-sm font-mono tracking-wider transition-all w-full ${
+                                activeTab === "auth"
+                                    ? "bg-white/10 text-white"
+                                    : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"
+                            }`}
+                        >
+                            <FaUser size={14} />
+                            SIGN IN
+                        </button>
+                    )}
+
                     <button
                         onClick={() => {
                             onSettings();

@@ -122,13 +122,13 @@ def _get_discovered_artists():
     """Fetch and filter newly discovered artists from SQLite, cached to prevent UI freeze."""
     # 1. Load Seed Artists
     seeds = set()
-    if os.path.exists("seed_artists.txt"):
-        with open("seed_artists.txt", "r") as f:
+    if os.path.exists("data/pipeline/seed_artists.txt"):
+        with open("data/pipeline/seed_artists.txt", "r") as f:
             for line in f:
                 if line.strip():
                     seeds.add(line.strip().lower())
-    if os.path.exists("discovery_seeds.txt"):
-        with open("discovery_seeds.txt", "r") as f:
+    if os.path.exists("data/pipeline/discovery_seeds.txt"):
+        with open("data/pipeline/discovery_seeds.txt", "r") as f:
             for line in f:
                 if line.strip():
                     seeds.add(line.strip().lower())
@@ -1078,9 +1078,9 @@ else:
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("🌟 Promote to Seed Artist", use_container_width=True, type="primary"):
-                    with open("discovery_seeds.txt", "a") as f:
+                    with open("data/pipeline/discovery_seeds.txt", "a") as f:
                         f.write(f"{selected_artist['profile_url']}\n")
-                    st.success(f"Added {selected_artist['name']} to discovery_seeds.txt!")
+                    st.success(f"Added {selected_artist['name']} to data/pipeline/discovery_seeds.txt!")
                     
                     # Clear the cache so the dropdown updates instantly
                     _get_discovered_artists.clear()
