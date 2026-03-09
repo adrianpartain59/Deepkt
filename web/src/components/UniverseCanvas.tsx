@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { Stage, Layer, Circle, Group, Line, Text } from "react-konva";
-import { FaSoundcloud, FaSpotify, FaApple, FaYoutube, FaChevronLeft, FaChevronRight, FaPause, FaPlay, FaHeart, FaChevronDown } from "react-icons/fa";
+import { FaSoundcloud, FaSpotify, FaApple, FaYoutube, FaChevronLeft, FaChevronRight, FaPause, FaPlay, FaHeart, FaChevronDown, FaBars } from "react-icons/fa";
 
 type PlatformKey = "soundcloud" | "spotify" | "apple_music" | "youtube_music";
 
@@ -59,7 +59,7 @@ interface TagZone {
 const DEFAULT_ZOOM = 5.0;
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-export default function UniverseCanvas() {
+export default function UniverseCanvas({ onMenuOpen }: { onMenuOpen?: () => void }) {
     const [nodes, setNodes] = useState<UniverseNode[]>([]);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     // scale for rendering-dependent values like edgeOpacity (synced lazily)
@@ -71,7 +71,13 @@ export default function UniverseCanvas() {
     const [tagZones, setTagZones] = useState<TagZone[]>([]);
 
     // Entry gate — requires one click to satisfy browser autoplay policy
-    const [hasEntered, setHasEntered] = useState(false);
+    // Persisted in sessionStorage so Spotify OAuth redirect doesn't reset it
+    const [hasEntered, setHasEntered] = useState(() => {
+        if (typeof window !== "undefined") {
+            return sessionStorage.getItem("hasEntered") === "true";
+        }
+        return false;
+    });
     const [showHint, setShowHint] = useState(false);
 
     // Search State
@@ -889,7 +895,7 @@ export default function UniverseCanvas() {
                 className="absolute inset-0 bg-black flex items-center justify-center z-50 cursor-pointer"
                 tabIndex={0}
                 autoFocus
-                onClick={() => { initAudioGraph(); setHasEntered(true); }}
+                onClick={() => { initAudioGraph(); setHasEntered(true); sessionStorage.setItem("hasEntered", "true"); }}
             >
                 <div className="flex flex-col items-center gap-6">
                     <h1 className="text-7xl font-normal text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider" style={{ fontFamily: 'var(--font-maswen)' }}>
@@ -916,14 +922,23 @@ export default function UniverseCanvas() {
             }}
         >
 
-            {/* Top Left: AMBIS Title */}
-            <div className="absolute top-6 left-6 z-10 pointer-events-none">
-                <h1 className="text-6xl font-normal text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider title-glow" style={{ fontFamily: 'var(--font-maswen)' }}>
-                    AMBIS
-                </h1>
-                <p className="text-m text-zinc-500 font-mono mt-1">
-                    {nodes.length > 0 ? `${nodes.length} nodes active` : 'Initializing Map...'}
-                </p>
+            {/* Top Left: Menu Button + AMBIS Title */}
+            <div className="absolute top-6 left-6 z-10 flex items-center gap-4">
+                <button
+                    onClick={(e) => { e.stopPropagation(); onMenuOpen?.(); }}
+                    className="text-zinc-400 hover:text-white transition-colors pointer-events-auto p-1"
+                    title="Menu"
+                >
+                    <FaBars size={22} />
+                </button>
+                <div className="pointer-events-none">
+                    <h1 className="text-6xl font-normal text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider title-glow" style={{ fontFamily: 'var(--font-maswen)' }}>
+                        AMBIS
+                    </h1>
+                    <p className="text-m text-zinc-500 font-mono mt-1">
+                        {nodes.length > 0 ? `${nodes.length} nodes active` : 'Initializing Map...'}
+                    </p>
+                </div>
             </div>
 
             {/* Top Center: Focal Track HUD */}
@@ -998,7 +1013,7 @@ export default function UniverseCanvas() {
                 </div>
             )}
 
-            {/* Top Right: Platform Switcher + Search Bar */}
+            {/* Top Right: Platform Switcher + Search Bar + Spotify Import */}
             <div className="absolute top-6 right-10 z-30 flex items-start gap-2">
                 {/* Platform Switcher */}
                 <div ref={platformDropdownRef} className="relative">
@@ -1034,7 +1049,7 @@ export default function UniverseCanvas() {
                 </div>
 
                 {/* Search Bar */}
-                <div className="relative w-80">
+                <div className="relative w-64">
                     <form onSubmit={handleSearch} className="relative">
                         <input
                             type="text"
@@ -1078,6 +1093,7 @@ export default function UniverseCanvas() {
                         </div>
                     )}
                 </div>
+
             </div>
 
             {/* Right: Local Neighborhood / Liked Songs Sidebar */}
