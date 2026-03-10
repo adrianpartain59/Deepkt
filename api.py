@@ -709,8 +709,12 @@ def spotify_import(req: SpotifyImportRequest, user: UserClaims = Depends(get_cur
 
             cross_reference_tracks(all_tracks, rate_limit=1.0, progress=progress)
             if not progress.cancelled:
-                save_seed_artists(progress)
-                # Save matched artist URLs to project if a slot was specified
+                try:
+                    save_seed_artists(progress)
+                except Exception:
+                    pass  # flat file is optional, user data goes to DB
+
+                # Save matched artist URLs to the user's project
                 if project_slot and 1 <= project_slot <= MAX_PROJECT_SLOTS:
                     proj = _load_user_project(uid, project_slot)
                     if proj:

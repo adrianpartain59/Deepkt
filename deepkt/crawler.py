@@ -22,7 +22,8 @@ class SoundCloudSpider:
         self.console = Console()
         self.load_state()
 
-        # Create output file if missing
+        # Create output file and parent dirs if missing
+        os.makedirs(os.path.dirname(CRAWLED_LINKS_FILE), exist_ok=True)
         if not os.path.exists(CRAWLED_LINKS_FILE):
              open(CRAWLED_LINKS_FILE, 'w').close()
              
