@@ -191,7 +191,7 @@ def google_login():
 
 @app.get("/api/auth/google/callback")
 async def google_callback(code: str):
-    from fastapi.responses import HTMLResponse
+    from urllib.parse import urlencode
     frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
     try:
         info = await google_oauth_exchange(code)
@@ -210,27 +210,15 @@ async def google_callback(code: str):
                     provider_id=info["provider_id"],
                 )
         tokens = _issue_tokens(user)
-        # PostMessage tokens back to opener
-        return HTMLResponse(f"""<!DOCTYPE html><html><body><script>
-            if (window.opener) {{
-                window.opener.postMessage({{
-                    type: "auth-callback",
-                    access_token: "{tokens['access_token']}",
-                    refresh_token: "{tokens['refresh_token']}",
-                    user: {json.dumps(tokens['user'])}
-                }}, "{frontend_url}");
-                window.close();
-            }} else {{
-                document.body.innerText = "Authenticated! You can close this window.";
-            }}
-        </script><p>Authenticating...</p></body></html>""")
+        params = urlencode({
+            "access_token": tokens["access_token"],
+            "refresh_token": tokens["refresh_token"],
+            "user": json.dumps(tokens["user"]),
+        })
+        return RedirectResponse(url=f"{frontend_url}/auth/callback?{params}")
     except Exception as e:
-        return HTMLResponse(f"""<!DOCTYPE html><html><body><script>
-            if (window.opener) {{
-                window.opener.postMessage({{ type: "auth-callback", error: "{str(e)}" }}, "{frontend_url}");
-                window.close();
-            }}
-        </script><p>Authentication failed: {str(e)}</p></body></html>""")
+        params = urlencode({"error": str(e)})
+        return RedirectResponse(url=f"{frontend_url}/auth/callback?{params}")
 
 
 
