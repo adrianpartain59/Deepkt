@@ -692,25 +692,29 @@ def spotify_import(req: SpotifyImportRequest, user: UserClaims = Depends(get_cur
         if existing and existing.state == "running":
             raise HTTPException(status_code=409, detail="Import already in progress")
 
-    all_tracks: list[dict] = []
-    for pid in req.playlist_ids:
-        try:
-            tracks = get_playlist_tracks(pid)
-            print(f"[import] playlist {pid}: {len(tracks)} tracks")
-            all_tracks.extend(tracks)
-        except Exception as e:
-            print(f"[import] playlist {pid} failed: {e}")
-
-    if not all_tracks:
-        raise HTTPException(status_code=400, detail="No tracks found in the selected playlists")
-
     progress = CrossRefProgress()
 
     project_slot = req.project_slot
     uid = user.user_id
+    playlist_ids = list(req.playlist_ids)
 
     def _run():
         from deepkt.cross_reference import cross_reference_tracks, save_seed_artists
+
+        # Fetch tracks inside the background thread to avoid request timeout
+        all_tracks: list[dict] = []
+        for pid in playlist_ids:
+            try:
+                tracks = get_playlist_tracks(pid)
+                print(f"[import] playlist {pid}: {len(tracks)} tracks")
+                all_tracks.extend(tracks)
+            except Exception as e:
+                print(f"[import] playlist {pid} failed: {e}")
+
+        if not all_tracks:
+            progress.state = "done"
+            return
+
         cross_reference_tracks(all_tracks, rate_limit=1.0, progress=progress)
         save_seed_artists(progress)
         # Save matched artist URLs to project if a slot was specified
@@ -728,7 +732,7 @@ def spotify_import(req: SpotifyImportRequest, user: UserClaims = Depends(get_cur
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
 
-    return {"status": "started", "total_tracks": len(all_tracks)}
+    return {"status": "started", "total_tracks": 0}
 
 
 @app.get("/api/spotify/status")
