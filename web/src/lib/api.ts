@@ -1,6 +1,8 @@
 import useAuthStore from "@/stores/authStore";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+// Use relative URLs so requests are proxied through Next.js rewrites,
+// avoiding cross-origin (CORS) issues in production.
+const API_BASE = "";
 
 /**
  * Authenticated fetch wrapper.

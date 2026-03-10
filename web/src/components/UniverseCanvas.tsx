@@ -57,7 +57,7 @@ interface TagZone {
 }
 
 const DEFAULT_ZOOM = 5.0;
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API_BASE = "";
 
 export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?: () => void; activeTab?: string }) {
     const [nodes, setNodes] = useState<UniverseNode[]>([]);

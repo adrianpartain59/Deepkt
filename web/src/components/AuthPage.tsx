@@ -5,7 +5,7 @@ import { FaBars, FaTimes } from "react-icons/fa";
 import { FcGoogle } from "react-icons/fc";
 import useAuthStore from "@/stores/authStore";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API_BASE = "";
 
 export default function AuthPage({ onMenuOpen }: { onMenuOpen: () => void }) {
     const [mode, setMode] = useState<"signin" | "signup">("signin");
