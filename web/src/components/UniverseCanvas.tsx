@@ -342,7 +342,7 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
 
     // 3b. Zoom Logic (Pinch with Fingers)
     const lastDistRef = useRef(0);
-    const lastCenterRef = useRef<{x: number, y: number} | null>(null);
+    const lastCenterRef = useRef<{ x: number, y: number } | null>(null);
 
     const getDistance = (p1: any, p2: any) => {
         return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
@@ -361,10 +361,14 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
         const touches = e.evt.touches;
         if (touches && touches.length === 2) {
             if (e.evt.cancelable) e.evt.preventDefault();
-            
+
+            if (stage.isDragging()) {
+                stage.stopDrag();
+            }
+
             const p1 = { x: touches[0].clientX, y: touches[0].clientY };
             const p2 = { x: touches[1].clientX, y: touches[1].clientY };
-            
+
             if (!lastCenterRef.current || !lastDistRef.current) {
                 lastDistRef.current = getDistance(p1, p2);
                 lastCenterRef.current = getCenter(p1, p2);
@@ -376,7 +380,7 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
 
             const scaleBy = newDist / lastDistRef.current;
             const v = viewRef.current;
-            
+
             const newScale = v.scale * scaleBy;
             const clampedScale = Math.min(Math.max(newScale, 0.001), 20.0);
 
@@ -635,7 +639,7 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
                     return res.json();
                 })
                 .then(data => setNeighbors(data))
-                .catch(() => {});
+                .catch(() => { });
         }, 400);
 
         return () => { clearTimeout(timer); controller.abort(); };
@@ -685,7 +689,7 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
             if (audioState === 'playing') {
                 audio.pause();
             } else {
-                audio.play().catch(() => {});
+                audio.play().catch(() => { });
             }
         };
         window.addEventListener('keydown', handleKeyDown);
@@ -1034,7 +1038,7 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
 
     return (
         <div
-            className="absolute inset-0 bg-black cursor-grab active:cursor-grabbing"
+            className={`absolute inset-0 bg-black cursor-grab active:cursor-grabbing ${isMobile ? 'touch-none' : ''}`}
             onClick={() => {
                 initAudioGraph();
                 if (autoplayBlocked && audioRef.current) {
@@ -1048,9 +1052,9 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
             {/* Top Left: Menu Button + AMBIS Title */}
             <div className={`absolute top-6 left-6 z-10 flex items-center gap-4`}>
                 <button
-                    onClick={(e) => { 
-                        e.stopPropagation(); 
-                        if (!isMobile) onMenuOpen?.(); 
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        if (!isMobile) onMenuOpen?.();
                     }}
                     className={`transition-colors pointer-events-auto p-1 ${isMobile ? 'text-zinc-700 cursor-not-allowed opacity-50' : 'text-zinc-400 hover:text-white'}`}
                     title={isMobile ? "Menu disabled in demo" : "Menu"}
