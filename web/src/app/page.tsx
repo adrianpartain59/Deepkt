@@ -70,7 +70,7 @@ export default function Home() {
       />
 
       {/* Universe canvas is always mounted (preserves state) */}
-      <UniverseCanvas onMenuOpen={() => setMenuOpen(true)} />
+      <UniverseCanvas onMenuOpen={() => setMenuOpen(true)} activeTab={activeTab} />
 
       {/* Page overlays */}
       {activeTab === "create" && <CreatePage onMenuOpen={() => setMenuOpen(true)} onNavigateToAuth={() => setActiveTab("auth")} />}

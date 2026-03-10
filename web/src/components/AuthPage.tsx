@@ -43,6 +43,21 @@ export default function AuthPage({ onMenuOpen }: { onMenuOpen: () => void }) {
         const left = window.screenX + (window.outerWidth - w) / 2;
         const top = window.screenY + (window.outerHeight - h) / 2;
         window.open(url, "google-auth", `width=${w},height=${h},left=${left},top=${top}`);
+
+        const onMessage = (e: MessageEvent) => {
+            if (e.data?.type !== "auth-callback") return;
+            window.removeEventListener("message", onMessage);
+            if (e.data.error) {
+                setError(e.data.error);
+            } else {
+                useAuthStore.getState().setTokensFromOAuth(
+                    e.data.access_token,
+                    e.data.refresh_token,
+                    e.data.user,
+                );
+            }
+        };
+        window.addEventListener("message", onMessage);
     };
 
 

@@ -59,13 +59,16 @@ interface TagZone {
 const DEFAULT_ZOOM = 5.0;
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-export default function UniverseCanvas({ onMenuOpen }: { onMenuOpen?: () => void }) {
+export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?: () => void; activeTab?: string }) {
     const [nodes, setNodes] = useState<UniverseNode[]>([]);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     // scale for rendering-dependent values like edgeOpacity (synced lazily)
     const [scaleForRender, setScaleForRender] = useState(DEFAULT_ZOOM);
     const [focalTrack, setFocalTrack] = useState<UniverseNode | null>(null);
     const [displayTrack, setDisplayTrack] = useState<UniverseNode | null>(null);
+    const trackHistoryRef = useRef<UniverseNode[]>([]);
+    const historyIndexRef = useRef(-1);
+    const isNavigatingBackRef = useRef(false);
 
     // Tag Zones
     const [tagZones, setTagZones] = useState<TagZone[]>([]);
@@ -130,6 +133,20 @@ export default function UniverseCanvas({ onMenuOpen }: { onMenuOpen?: () => void
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [platformOpen]);
 
+    // Track history for back button (synchronous ref update during render)
+    const history = trackHistoryRef.current;
+    const currentHistoryTrack = historyIndexRef.current >= 0 ? history[historyIndexRef.current] : null;
+    if (focalTrack && focalTrack.id !== currentHistoryTrack?.id) {
+        if (isNavigatingBackRef.current) {
+            isNavigatingBackRef.current = false;
+        } else {
+            // Trim any forward history and push new track
+            trackHistoryRef.current = history.slice(0, historyIndexRef.current + 1);
+            trackHistoryRef.current.push(focalTrack);
+            historyIndexRef.current = trackHistoryRef.current.length - 1;
+        }
+    }
+
     // Audio Player State
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const [audioState, setAudioState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
@@ -143,6 +160,13 @@ export default function UniverseCanvas({ onMenuOpen }: { onMenuOpen?: () => void
     const audioDataRef = useRef<Uint8Array<ArrayBuffer>>(new Uint8Array(0));
     const focalGroupRef = useRef<any>(null);
 
+    // Pause audio when navigating away from explore tab
+    useEffect(() => {
+        if (activeTab && activeTab !== "explore") {
+            audioRef.current?.pause();
+        }
+    }, [activeTab]);
+
     // Oscilloscope
     const scopeCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const scopeRafRef = useRef<number>(0);
@@ -152,7 +176,7 @@ export default function UniverseCanvas({ onMenuOpen }: { onMenuOpen?: () => void
     const viewRef = useRef({ x: 0, y: 0, scale: DEFAULT_ZOOM });
     const rafRef = useRef<number>(0);
     const isDraggingRef = useRef(false);
-    const zoomCooldownRef = useRef(0);
+    const zoomCooldownRef = useRef(Infinity);
     const prevViewRef = useRef({ x: 0, y: 0, scale: DEFAULT_ZOOM });
     const scaleRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isInteractingRef = useRef(false);
@@ -170,7 +194,8 @@ export default function UniverseCanvas({ onMenuOpen }: { onMenuOpen?: () => void
                 return res.json();
             })
             .then((data) => {
-                // The UMAP math floats are usually [-5.0 to 10.0]. 
+                if (!isMounted) return;
+                // The UMAP math floats are usually [-5.0 to 10.0].
                 // We scales them up to spread them across the virtual map.
                 // We're using * 500 (reduced from 2000) so the Supervised UMAP clusters remain distinct but sit closer together.
                 const scaled = data.map((n: any) => ({
@@ -192,8 +217,8 @@ export default function UniverseCanvas({ onMenuOpen }: { onMenuOpen?: () => void
                     const startY = cy - first.y * DEFAULT_ZOOM;
 
                     viewRef.current = { x: startX, y: startY, scale: DEFAULT_ZOOM };
-                    // Pause the gravity/proximity engine so it doesn't override our random pick
-                    zoomCooldownRef.current = performance.now() + 2000;
+                    // zoomCooldownRef starts at Infinity — proximity engine stays paused
+                    // until the user's first interaction (scroll, drag, click, etc.)
                     setFocalTrack(first); // Make the random node the focal track on load
                 }
             })
@@ -945,6 +970,24 @@ export default function UniverseCanvas({ onMenuOpen }: { onMenuOpen?: () => void
             {focalTrack && (
                 <div className="absolute top-6 left-1/2 -translate-x-1/2 z-40">
                     <div className="bg-black/80 backdrop-blur-md border border-[#e040fb]/30 px-5 py-3 rounded-xl flex items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-300 max-w-[30rem] shadow-[0_0_25px_rgba(224,64,251,0.2)] pointer-events-auto">
+                        {historyIndexRef.current > 0 && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    const prevIndex = historyIndexRef.current - 1;
+                                    const prevTrack = trackHistoryRef.current[prevIndex];
+                                    if (prevTrack) {
+                                        isNavigatingBackRef.current = true;
+                                        historyIndexRef.current = prevIndex;
+                                        jumpToNode(prevTrack);
+                                    }
+                                }}
+                                className="shrink-0 p-1 text-zinc-500 hover:text-[#00e5ff] transition-colors"
+                                title={`Back to ${trackHistoryRef.current[historyIndexRef.current - 1]?.artist} – ${trackHistoryRef.current[historyIndexRef.current - 1]?.title}`}
+                            >
+                                <FaChevronLeft size={18} />
+                            </button>
+                        )}
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();
