@@ -25,6 +25,8 @@ class CrossRefProgress:
     matched: list = field(default_factory=list)
     unmatched: list = field(default_factory=list)
     state: str = "idle"
+    error: str = ""
+    cancelled: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -35,6 +37,7 @@ class CrossRefProgress:
             "unmatched_count": len(self.unmatched),
             "matched": self.matched,
             "unmatched": self.unmatched,
+            "error": self.error,
         }
 
 
@@ -118,6 +121,10 @@ def cross_reference_tracks(
     )
 
     for pair in unique_pairs:
+        if progress.cancelled:
+            progress.state = "done"
+            return progress
+
         artist = pair["artist"]
         title = pair["title"]
         norm_artist = _normalize(artist)

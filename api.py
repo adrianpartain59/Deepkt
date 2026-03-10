@@ -55,10 +55,9 @@ async def _global_exception_handler(request: Request, exc: Exception):
         raise exc  # let FastAPI handle HTTPExceptions normally
     import traceback
     traceback.print_exc()
-    tb = traceback.format_exc()
     return JSONResponse(
         status_code=500,
-        content={"detail": f"{type(exc).__name__}: {exc}", "traceback": tb},
+        content={"detail": "Internal server error"},
     )
 
 
@@ -708,19 +707,22 @@ def spotify_import(req: SpotifyImportRequest, user: UserClaims = Depends(get_cur
         if existing and existing.state == "running":
             raise HTTPException(status_code=409, detail="Import already in progress")
 
-    try:
-        progress = CrossRefProgress()
+    progress = CrossRefProgress()
 
-        project_slot = req.project_slot
-        uid = user.user_id
-        playlist_ids = list(req.playlist_ids)
+    project_slot = req.project_slot
+    uid = user.user_id
+    playlist_ids = list(req.playlist_ids)
 
-        def _run():
+    def _run():
+        try:
             from deepkt.cross_reference import cross_reference_tracks, save_seed_artists
 
             # Fetch tracks inside the background thread to avoid request timeout
             all_tracks: list[dict] = []
             for pid in playlist_ids:
+                if progress.cancelled:
+                    progress.state = "done"
+                    return
                 try:
                     tracks = get_playlist_tracks(pid)
                     print(f"[import] playlist {pid}: {len(tracks)} tracks")
@@ -729,40 +731,50 @@ def spotify_import(req: SpotifyImportRequest, user: UserClaims = Depends(get_cur
                     print(f"[import] playlist {pid} failed: {e}")
 
             if not all_tracks:
+                progress.error = "No tracks found in the selected playlists"
                 progress.state = "done"
                 return
 
             cross_reference_tracks(all_tracks, rate_limit=1.0, progress=progress)
-            save_seed_artists(progress)
-            # Save matched artist URLs to project if a slot was specified
-            if project_slot and 1 <= project_slot <= MAX_PROJECT_SLOTS:
-                proj = _load_user_project(uid, project_slot)
-                if proj:
-                    existing_urls = set(proj.get("playlist_urls", []))
-                    for m in progress.matched:
-                        existing_urls.add(m["sc_url"])
-                    _save_user_project(uid, project_slot, proj["name"], list(existing_urls))
+            if not progress.cancelled:
+                save_seed_artists(progress)
+                # Save matched artist URLs to project if a slot was specified
+                if project_slot and 1 <= project_slot <= MAX_PROJECT_SLOTS:
+                    proj = _load_user_project(uid, project_slot)
+                    if proj:
+                        existing_urls = set(proj.get("playlist_urls", []))
+                        for m in progress.matched:
+                            existing_urls.add(m["sc_url"])
+                        _save_user_project(uid, project_slot, proj["name"], list(existing_urls))
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            progress.error = f"{type(e).__name__}: {e}"
+            progress.state = "done"
 
-        with _import_lock:
-            _import_progress[user.user_id] = progress
+    with _import_lock:
+        _import_progress[user.user_id] = progress
 
-        thread = threading.Thread(target=_run, daemon=True)
-        thread.start()
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
 
-        return {"status": "started", "total_tracks": 0}
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        print(f"[spotify_import] {tb}")
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}\n{tb}")
+    return {"status": "started", "total_tracks": 0}
 
 
 @app.get("/api/spotify/status")
 def spotify_status(user: UserClaims = Depends(get_current_user)):
     progress = _import_progress.get(user.user_id)
     if progress is None:
-        return {"state": "idle", "total": 0, "processed": 0, "matched_count": 0, "unmatched_count": 0, "matched": [], "unmatched": []}
+        return {"state": "idle", "total": 0, "processed": 0, "matched_count": 0, "unmatched_count": 0, "matched": [], "unmatched": [], "error": ""}
     return progress.to_dict()
+
+
+@app.post("/api/spotify/abort")
+def spotify_abort(user: UserClaims = Depends(get_current_user)):
+    progress = _import_progress.get(user.user_id)
+    if progress and progress.state == "running":
+        progress.cancelled = True
+    return {"status": "aborted"}
 
 
 if __name__ == "__main__":

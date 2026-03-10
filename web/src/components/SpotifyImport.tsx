@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
-import { FaSpotify, FaTimes, FaCheck, FaExclamationTriangle } from "react-icons/fa";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { FaSpotify, FaTimes, FaCheck, FaExclamationTriangle, FaStop } from "react-icons/fa";
 import { apiFetch } from "@/lib/api";
 
 interface Playlist {
@@ -20,6 +20,7 @@ interface ImportStatus {
     unmatched_count: number;
     matched: { artist: string; sc_url: string; sc_username: string }[];
     unmatched: { artist: string; title: string }[];
+    error: string;
 }
 
 type Phase = "playlists" | "importing" | "done";
@@ -36,7 +37,8 @@ export default function SpotifyImport({ projectSlot, onImportComplete, isConnect
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [status, setStatus] = useState<ImportStatus | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [showModal, setShowModal] = useState(false);
+    const [expanded, setExpanded] = useState(false);
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const fetchPlaylists = useCallback(async () => {
         const path = "/api/spotify/playlists";
@@ -62,7 +64,6 @@ export default function SpotifyImport({ projectSlot, onImportComplete, isConnect
         }
     }, []);
 
-    // Fetch playlists on mount since we know we're connected
     useEffect(() => {
         if (isConnected && playlists.length === 0) {
             fetchPlaylists();
@@ -82,7 +83,7 @@ export default function SpotifyImport({ projectSlot, onImportComplete, isConnect
         if (selected.size === 0) return;
         setError(null);
         setPhase("importing");
-        setShowModal(true);
+        setStatus(null);
 
         const path = "/api/spotify/import";
         try {
@@ -110,21 +111,47 @@ export default function SpotifyImport({ projectSlot, onImportComplete, isConnect
     };
 
     const pollStatus = useCallback(() => {
-        const interval = setInterval(async () => {
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = setInterval(async () => {
             try {
                 const res = await apiFetch("/api/spotify/status");
                 const data: ImportStatus = await res.json();
                 setStatus(data);
+                if (data.error) {
+                    setError(data.error);
+                }
                 if (data.state === "done") {
-                    clearInterval(interval);
+                    if (pollRef.current) clearInterval(pollRef.current);
+                    pollRef.current = null;
                     setPhase("done");
-                    onImportComplete?.();
+                    if (!data.error) onImportComplete?.();
                 }
             } catch {
-                clearInterval(interval);
+                if (pollRef.current) clearInterval(pollRef.current);
+                pollRef.current = null;
             }
         }, 2000);
     }, [onImportComplete]);
+
+    useEffect(() => {
+        return () => {
+            if (pollRef.current) clearInterval(pollRef.current);
+        };
+    }, []);
+
+    const handleAbort = async () => {
+        try {
+            await apiFetch("/api/spotify/abort", { method: "POST" });
+        } catch { /* best effort */ }
+    };
+
+    const resetImport = () => {
+        setPhase("playlists");
+        setSelected(new Set());
+        setStatus(null);
+        setError(null);
+        setExpanded(false);
+    };
 
     const setErrorWithLog = (msg: string) => {
         console.error("[SpotifyImport]", msg);
@@ -135,8 +162,8 @@ export default function SpotifyImport({ projectSlot, onImportComplete, isConnect
         ? Math.round((status.processed / status.total) * 100)
         : 0;
 
-    // Inline playlist picker (no modal needed for selection)
-    if (!showModal) {
+    // Playlist picker (shown when not importing)
+    if (phase === "playlists") {
         return (
             <div className="space-y-3">
                 {error && (
@@ -207,156 +234,107 @@ export default function SpotifyImport({ projectSlot, onImportComplete, isConnect
         );
     }
 
-    // Modal for import progress / done
+    // Progress pill + expandable panel (importing & done)
     return (
-        <>
+        <div className="space-y-2">
+            {/* Compact progress pill */}
             <button
-                onClick={() => {
-                    if (phase === "done") {
-                        setShowModal(false);
-                        setPhase("playlists");
-                        setSelected(new Set());
-                        setStatus(null);
-                    }
-                }}
-                className="bg-black/80 backdrop-blur-md border border-[#1DB954]/50 rounded-full px-4 h-[46px] flex items-center gap-2 pointer-events-auto"
+                onClick={() => setExpanded(!expanded)}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+                    error
+                        ? "bg-red-500/10 border border-red-500/30"
+                        : phase === "done"
+                            ? "bg-[#1DB954]/10 border border-[#1DB954]/30"
+                            : "bg-white/5 border border-white/10"
+                }`}
             >
-                <FaSpotify size={18} className="text-[#1DB954]" />
-                <span className="text-sm font-mono text-[#1DB954]">
-                    {phase === "importing" ? `${progressPct}%` : "Complete"}
-                </span>
-            </button>
+                <FaSpotify size={18} className={error ? "text-red-400" : "text-[#1DB954]"} />
 
-            <div
-                className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm"
-                onClick={(e) => {
-                    e.stopPropagation();
-                    if (phase !== "importing") {
-                        setShowModal(false);
-                        setPhase("playlists");
-                        setSelected(new Set());
-                        setStatus(null);
-                    }
-                }}
-            >
-                <div
-                    className="bg-zinc-950 border border-white/10 rounded-2xl w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl overflow-hidden"
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    {/* Header */}
-                    <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+                {/* Progress bar (inline) */}
+                <div className="flex-1 min-w-0">
+                    {phase === "importing" && (
                         <div className="flex items-center gap-3">
-                            <FaSpotify size={24} className="text-[#1DB954]" />
-                            <h2 className="text-lg font-bold text-white">
-                                {phase === "importing" && "Importing Artists"}
-                                {phase === "done" && "Import Complete"}
-                            </h2>
+                            <div className="flex-1 bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                                <div
+                                    className="h-full bg-gradient-to-r from-[#1DB954] to-[#00e5ff] transition-all duration-500 rounded-full"
+                                    style={{ width: `${progressPct}%` }}
+                                />
+                            </div>
+                            <span className="text-xs font-mono text-zinc-400 shrink-0">
+                                {status && status.total > 0
+                                    ? `${status.processed}/${status.total}`
+                                    : "Starting..."}
+                            </span>
                         </div>
-                        {phase !== "importing" && (
-                            <button
-                                onClick={() => {
-                                    setShowModal(false);
-                                    setPhase("playlists");
-                                    setSelected(new Set());
-                                    setStatus(null);
-                                }}
-                                className="text-zinc-500 hover:text-white transition-colors"
-                            >
-                                <FaTimes size={18} />
-                            </button>
-                        )}
-                    </div>
-
-                    {/* Error banner */}
+                    )}
+                    {phase === "done" && !error && (
+                        <span className="text-sm font-mono text-[#1DB954]">
+                            Complete — {status?.matched_count ?? 0} artists found
+                        </span>
+                    )}
                     {error && (
-                        <div className="mx-6 mt-4 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg flex gap-2 max-h-32 overflow-y-auto">
-                            <FaExclamationTriangle className="text-red-400 shrink-0 mt-0.5" />
-                            <p className="text-xs text-red-300 font-mono break-all whitespace-pre-wrap">{error}</p>
-                        </div>
-                    )}
-
-                    {/* Import progress */}
-                    {phase === "importing" && status && (
-                        <div className="px-6 py-8 space-y-6">
-                            <div className="space-y-2">
-                                <div className="flex justify-between text-sm font-mono">
-                                    <span className="text-zinc-400">Searching SoundCloud...</span>
-                                    <span className="text-white">{status.processed} / {status.total}</span>
-                                </div>
-                                <div className="w-full bg-zinc-800 rounded-full h-2 overflow-hidden">
-                                    <div
-                                        className="h-full bg-gradient-to-r from-[#1DB954] to-[#00e5ff] transition-all duration-500 rounded-full"
-                                        style={{ width: `${progressPct}%` }}
-                                    />
-                                </div>
-                            </div>
-                            <div className="flex gap-4 justify-center font-mono text-sm">
-                                <div className="text-center">
-                                    <p className="text-2xl font-bold text-[#1DB954]">{status.matched_count}</p>
-                                    <p className="text-zinc-500">Matched</p>
-                                </div>
-                                <div className="text-center">
-                                    <p className="text-2xl font-bold text-zinc-500">{status.unmatched_count}</p>
-                                    <p className="text-zinc-500">Unmatched</p>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Done */}
-                    {phase === "done" && status && (
-                        <div className="flex-1 overflow-y-auto scrollbar-hide px-6 py-6 space-y-4">
-                            <div className="flex gap-4 justify-center font-mono text-sm mb-4">
-                                <div className="text-center">
-                                    <p className="text-3xl font-bold text-[#1DB954]">{status.matched_count}</p>
-                                    <p className="text-zinc-500">Artists Found</p>
-                                </div>
-                                <div className="text-center">
-                                    <p className="text-3xl font-bold text-zinc-600">{status.unmatched_count}</p>
-                                    <p className="text-zinc-500">Not Found</p>
-                                </div>
-                            </div>
-
-                            {status.matched.length > 0 && (
-                                <div>
-                                    <p className="text-xs font-mono text-zinc-500 uppercase tracking-wider mb-2">
-                                        Matched Artists
-                                    </p>
-                                    <div className="space-y-1">
-                                        {status.matched.map((m, i) => (
-                                            <div key={i} className="flex items-center gap-2 px-3 py-2 bg-[#1DB954]/5 rounded-lg">
-                                                <FaCheck size={10} className="text-[#1DB954] shrink-0" />
-                                                <span className="text-sm text-white truncate">{m.artist}</span>
-                                                <span className="text-xs text-zinc-600 truncate ml-auto">{m.sc_username}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {status.unmatched.length > 0 && (
-                                <div>
-                                    <p className="text-xs font-mono text-zinc-500 uppercase tracking-wider mb-2">
-                                        Not Found on SoundCloud
-                                    </p>
-                                    <div className="space-y-1">
-                                        {status.unmatched.map((u, i) => (
-                                            <div key={i} className="flex items-center gap-2 px-3 py-2 bg-white/5 rounded-lg">
-                                                <FaTimes size={10} className="text-zinc-600 shrink-0" />
-                                                <span className="text-sm text-zinc-400 truncate">{u.artist}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            <p className="text-xs text-zinc-600 text-center font-mono pt-2">
-                                Saved to project slot {projectSlot}
-                            </p>
-                        </div>
+                        <span className="text-sm font-mono text-red-400 truncate block">
+                            {error}
+                        </span>
                     )}
                 </div>
-            </div>
-        </>
+
+                {/* Abort button */}
+                {phase === "importing" && (
+                    <button
+                        onClick={(e) => { e.stopPropagation(); handleAbort(); }}
+                        className="text-zinc-500 hover:text-red-400 transition-colors p-1"
+                        title="Abort import"
+                    >
+                        <FaStop size={12} />
+                    </button>
+                )}
+
+                {/* Dismiss button (when done) */}
+                {phase === "done" && (
+                    <button
+                        onClick={(e) => { e.stopPropagation(); resetImport(); }}
+                        className="text-zinc-500 hover:text-white transition-colors p-1"
+                        title="Dismiss"
+                    >
+                        <FaTimes size={12} />
+                    </button>
+                )}
+            </button>
+
+            {/* Expandable details panel */}
+            {expanded && status && (phase === "importing" || phase === "done") && (
+                <div className="bg-zinc-900/80 border border-white/10 rounded-xl overflow-hidden">
+                    {/* Stats row */}
+                    <div className="flex gap-4 justify-center font-mono text-sm px-4 py-3 border-b border-white/5">
+                        <div className="text-center">
+                            <p className="text-lg font-bold text-[#1DB954]">{status.matched_count}</p>
+                            <p className="text-xs text-zinc-500">Matched</p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-lg font-bold text-zinc-500">{status.unmatched_count}</p>
+                            <p className="text-xs text-zinc-500">Unmatched</p>
+                        </div>
+                    </div>
+
+                    {/* Results list */}
+                    <div className="max-h-48 overflow-y-auto scrollbar-hide px-4 py-2 space-y-1">
+                        {status.matched.map((m, i) => (
+                            <div key={`m-${i}`} className="flex items-center gap-2 px-2 py-1.5 rounded-lg">
+                                <FaCheck size={8} className="text-[#1DB954] shrink-0" />
+                                <span className="text-xs text-white truncate">{m.artist}</span>
+                                <span className="text-xs text-zinc-600 truncate ml-auto">{m.sc_username}</span>
+                            </div>
+                        ))}
+                        {status.unmatched.map((u, i) => (
+                            <div key={`u-${i}`} className="flex items-center gap-2 px-2 py-1.5 rounded-lg">
+                                <FaTimes size={8} className="text-zinc-600 shrink-0" />
+                                <span className="text-xs text-zinc-500 truncate">{u.artist}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
     );
 }
