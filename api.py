@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 from deepkt import db as trackdb
+from deepkt import user_db
 from deepkt.downloader import download_single
 from deepkt.auth import (
     hash_password, verify_password,
@@ -543,37 +544,11 @@ class ProjectUpdate(BaseModel):
 
 
 def _load_user_project(user_id: str, slot: int) -> Optional[dict]:
-    conn = trackdb.get_db()
-    row = conn.execute(
-        "SELECT * FROM projects WHERE user_id = ? AND slot = ?", (user_id, slot)
-    ).fetchone()
-    conn.close()
-    if not row:
-        return None
-    d = dict(row)
-    d["playlist_urls"] = json.loads(d.get("playlist_urls", "[]"))
-    return d
+    return user_db.load_user_project(user_id, slot)
 
 
 def _save_user_project(user_id: str, slot: int, name: str, playlist_urls: list):
-    conn = trackdb.get_db()
-    now = datetime.now(timezone.utc).isoformat()
-    existing = conn.execute(
-        "SELECT id FROM projects WHERE user_id = ? AND slot = ?", (user_id, slot)
-    ).fetchone()
-    if existing:
-        conn.execute(
-            "UPDATE projects SET name = ?, playlist_urls = ?, updated_at = ? WHERE user_id = ? AND slot = ?",
-            (name, json.dumps(playlist_urls), now, user_id, slot),
-        )
-    else:
-        project_id = uuid.uuid4().hex
-        conn.execute(
-            "INSERT INTO projects (id, user_id, slot, name, playlist_urls, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (project_id, user_id, slot, name, json.dumps(playlist_urls), now, now),
-        )
-    conn.commit()
-    conn.close()
+    user_db.save_user_project(user_id, slot, name, playlist_urls)
 
 
 @app.get("/api/projects")
@@ -626,10 +601,7 @@ def update_project(slot: int, req: ProjectUpdate, user: UserClaims = Depends(get
 def delete_project(slot: int, user: UserClaims = Depends(get_current_user)):
     if slot < 1 or slot > MAX_PROJECT_SLOTS:
         raise HTTPException(status_code=400, detail=f"Slot must be 1-{MAX_PROJECT_SLOTS}")
-    conn = trackdb.get_db()
-    conn.execute("DELETE FROM projects WHERE user_id = ? AND slot = ?", (user.user_id, slot))
-    conn.commit()
-    conn.close()
+    user_db.delete_user_project(user.user_id, slot)
     return {"status": "deleted", "slot": slot}
 
 

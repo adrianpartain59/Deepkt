@@ -14,7 +14,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from fastapi import Depends, HTTPException, Request
 
-from deepkt import db as trackdb
+from deepkt import user_db
 
 # ---------------------------------------------------------------------------
 # Config
@@ -126,85 +126,44 @@ def optional_current_user(request: Request) -> Optional[UserClaims]:
 
 
 # ---------------------------------------------------------------------------
-# User DB helpers
+# User DB helpers (delegated to user_db — PostgreSQL in prod, SQLite locally)
 # ---------------------------------------------------------------------------
 
 def create_user(email: str, display_name: str = None, password: str = None,
                 auth_provider: str = "email", provider_id: str = None) -> dict:
     """Create a new user. Returns the user dict."""
-    conn = trackdb.get_db()
-    user_id = uuid.uuid4().hex
     password_hash = hash_password(password) if password else None
-    now = datetime.now(timezone.utc).isoformat()
-
-    conn.execute(
-        """INSERT INTO users (id, email, display_name, password_hash, auth_provider, provider_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (user_id, email.lower().strip(), display_name, password_hash, auth_provider, provider_id, now, now),
+    return user_db.create_user(
+        email=email, display_name=display_name, password_hash=password_hash,
+        auth_provider=auth_provider, provider_id=provider_id,
     )
-    conn.commit()
-    conn.close()
-    return {"id": user_id, "email": email.lower().strip(), "display_name": display_name, "auth_provider": auth_provider}
 
 
 def get_user_by_email(email: str) -> Optional[dict]:
-    conn = trackdb.get_db()
-    row = conn.execute("SELECT * FROM users WHERE email = ?", (email.lower().strip(),)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    return user_db.get_user_by_email(email)
 
 
 def get_user_by_provider(provider: str, provider_id: str) -> Optional[dict]:
-    conn = trackdb.get_db()
-    row = conn.execute(
-        "SELECT * FROM users WHERE auth_provider = ? AND provider_id = ?",
-        (provider, provider_id),
-    ).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    return user_db.get_user_by_provider(provider, provider_id)
 
 
 def get_user_by_id(user_id: str) -> Optional[dict]:
-    conn = trackdb.get_db()
-    row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    return user_db.get_user_by_id(user_id)
 
 
 def store_refresh_token(user_id: str, hashed_jti: str):
     """Store the hashed refresh token jti for the user (single-session: replaces old)."""
-    conn = trackdb.get_db()
-    now = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        "UPDATE users SET refresh_token = ?, updated_at = ? WHERE id = ?",
-        (hashed_jti, now, user_id),
-    )
-    conn.commit()
-    conn.close()
+    user_db.store_refresh_token(user_id, hashed_jti)
 
 
 def revoke_refresh_token(user_id: str):
     """Revoke the user's refresh token."""
-    conn = trackdb.get_db()
-    now = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        "UPDATE users SET refresh_token = NULL, updated_at = ? WHERE id = ?",
-        (now, user_id),
-    )
-    conn.commit()
-    conn.close()
+    user_db.revoke_refresh_token(user_id)
 
 
 def link_oauth_provider(user_id: str, provider: str, provider_id: str):
     """Link an OAuth provider to an existing user."""
-    conn = trackdb.get_db()
-    now = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        "UPDATE users SET auth_provider = ?, provider_id = ?, updated_at = ? WHERE id = ?",
-        (provider, provider_id, now, user_id),
-    )
-    conn.commit()
-    conn.close()
+    user_db.link_oauth_provider(user_id, provider, provider_id)
 
 
 # ---------------------------------------------------------------------------
