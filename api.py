@@ -51,6 +51,8 @@ app.add_middleware(
 async def _global_exception_handler(request: Request, exc: Exception):
     """Return a JSON 500 so CORSMiddleware can still attach CORS headers."""
     from starlette.responses import JSONResponse
+    if isinstance(exc, HTTPException):
+        raise exc  # let FastAPI handle HTTPExceptions normally
     import traceback
     traceback.print_exc()
     return JSONResponse(
@@ -705,47 +707,52 @@ def spotify_import(req: SpotifyImportRequest, user: UserClaims = Depends(get_cur
         if existing and existing.state == "running":
             raise HTTPException(status_code=409, detail="Import already in progress")
 
-    progress = CrossRefProgress()
+    try:
+        progress = CrossRefProgress()
 
-    project_slot = req.project_slot
-    uid = user.user_id
-    playlist_ids = list(req.playlist_ids)
+        project_slot = req.project_slot
+        uid = user.user_id
+        playlist_ids = list(req.playlist_ids)
 
-    def _run():
-        from deepkt.cross_reference import cross_reference_tracks, save_seed_artists
+        def _run():
+            from deepkt.cross_reference import cross_reference_tracks, save_seed_artists
 
-        # Fetch tracks inside the background thread to avoid request timeout
-        all_tracks: list[dict] = []
-        for pid in playlist_ids:
-            try:
-                tracks = get_playlist_tracks(pid)
-                print(f"[import] playlist {pid}: {len(tracks)} tracks")
-                all_tracks.extend(tracks)
-            except Exception as e:
-                print(f"[import] playlist {pid} failed: {e}")
+            # Fetch tracks inside the background thread to avoid request timeout
+            all_tracks: list[dict] = []
+            for pid in playlist_ids:
+                try:
+                    tracks = get_playlist_tracks(pid)
+                    print(f"[import] playlist {pid}: {len(tracks)} tracks")
+                    all_tracks.extend(tracks)
+                except Exception as e:
+                    print(f"[import] playlist {pid} failed: {e}")
 
-        if not all_tracks:
-            progress.state = "done"
-            return
+            if not all_tracks:
+                progress.state = "done"
+                return
 
-        cross_reference_tracks(all_tracks, rate_limit=1.0, progress=progress)
-        save_seed_artists(progress)
-        # Save matched artist URLs to project if a slot was specified
-        if project_slot and 1 <= project_slot <= MAX_PROJECT_SLOTS:
-            proj = _load_user_project(uid, project_slot)
-            if proj:
-                existing_urls = set(proj.get("playlist_urls", []))
-                for m in progress.matched:
-                    existing_urls.add(m["sc_url"])
-                _save_user_project(uid, project_slot, proj["name"], list(existing_urls))
+            cross_reference_tracks(all_tracks, rate_limit=1.0, progress=progress)
+            save_seed_artists(progress)
+            # Save matched artist URLs to project if a slot was specified
+            if project_slot and 1 <= project_slot <= MAX_PROJECT_SLOTS:
+                proj = _load_user_project(uid, project_slot)
+                if proj:
+                    existing_urls = set(proj.get("playlist_urls", []))
+                    for m in progress.matched:
+                        existing_urls.add(m["sc_url"])
+                    _save_user_project(uid, project_slot, proj["name"], list(existing_urls))
 
-    with _import_lock:
-        _import_progress[user.user_id] = progress
+        with _import_lock:
+            _import_progress[user.user_id] = progress
 
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
 
-    return {"status": "started", "total_tracks": 0}
+        return {"status": "started", "total_tracks": 0}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/spotify/status")

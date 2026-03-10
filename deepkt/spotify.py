@@ -86,7 +86,7 @@ def is_authenticated() -> bool:
     try:
         _ensure_client()
         return True
-    except ValueError:
+    except Exception:
         return False
 
 
