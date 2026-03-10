@@ -137,7 +137,7 @@ export default function CreatePage({ onMenuOpen, onNavigateToAuth }: { onMenuOpe
     // Gate: require login
     if (!user) {
         return (
-            <div className="absolute inset-0 bg-black z-50 overflow-y-auto">
+            <div className="absolute inset-0 bg-black z-50 overflow-y-auto scrollbar-hide">
                 <button
                     onClick={onMenuOpen}
                     className="absolute top-6 left-6 text-zinc-400 hover:text-white transition-colors p-1 z-10"
@@ -172,7 +172,7 @@ export default function CreatePage({ onMenuOpen, onNavigateToAuth }: { onMenuOpe
     }
 
     return (
-        <div className="absolute inset-0 bg-black z-50 overflow-y-auto">
+        <div className="absolute inset-0 bg-black z-50 overflow-y-auto scrollbar-hide">
             <button
                 onClick={onMenuOpen}
                 className="absolute top-6 left-6 text-zinc-400 hover:text-white transition-colors p-1 z-10"

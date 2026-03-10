@@ -146,7 +146,7 @@ export default function SpotifyImport({ projectSlot, onImportComplete, isConnect
                     </div>
                 )}
 
-                <div className="max-h-64 overflow-y-auto space-y-2">
+                <div className="max-h-64 overflow-y-auto scrollbar-hide space-y-2">
                     {playlists.map((pl) => (
                         <button
                             key={pl.id}
@@ -305,7 +305,7 @@ export default function SpotifyImport({ projectSlot, onImportComplete, isConnect
 
                     {/* Done */}
                     {phase === "done" && status && (
-                        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
+                        <div className="flex-1 overflow-y-auto scrollbar-hide px-6 py-6 space-y-4">
                             <div className="flex gap-4 justify-center font-mono text-sm mb-4">
                                 <div className="text-center">
                                     <p className="text-3xl font-bold text-[#1DB954]">{status.matched_count}</p>

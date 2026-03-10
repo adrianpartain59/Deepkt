@@ -90,7 +90,10 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
 
     // Sidebar State
     const [neighbors, setNeighbors] = useState<{ id: string, artist: string, title: string, x: number, y: number, url?: string, match_pct?: number }[]>([]);
-    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+        if (typeof window === "undefined") return true;
+        return window.innerWidth > 768;
+    });
 
     // Liked Tracks (persisted to localStorage, ordered most-recent-first)
     const [likedTrackIds, setLikedTrackIds] = useState<string[]>(() => {
@@ -220,6 +223,7 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
                     // zoomCooldownRef starts at Infinity — proximity engine stays paused
                     // until the user's first interaction (scroll, drag, click, etc.)
                     setFocalTrack(first); // Make the random node the focal track on load
+                    setDisplayTrack(first); // Sync display track so similar tracks panel & audio work immediately
                 }
             })
             .catch((err) => console.error("API Error: ", err));
@@ -548,6 +552,7 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
     useEffect(() => {
         const audio = audioRef.current;
         if (!audio || !hasEntered) return;
+        if (activeTab && activeTab !== "explore") return;
         if (isInteractingRef.current) return;
 
         if (!focalTrack) {
@@ -573,7 +578,7 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
                     setAudioState('idle');
                 }
             });
-    }, [focalTrack?.id, hasEntered, isInteracting]);
+    }, [focalTrack?.id, hasEntered, isInteracting, activeTab]);
 
     // Spacebar toggles play/pause globally (skip when typing in an input)
     useEffect(() => {
