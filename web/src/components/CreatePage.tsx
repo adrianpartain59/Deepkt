@@ -1,8 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { FaBars, FaPlus, FaFolder, FaFolderOpen, FaTrash, FaTimes, FaSpotify, FaUser } from "react-icons/fa";
-import SpotifyImport from "./SpotifyImport";
+import { FaBars, FaPlus, FaFolder, FaTrash, FaTimes, FaUser } from "react-icons/fa";
 import useAuthStore from "@/stores/authStore";
 import { apiFetch } from "@/lib/api";
 
@@ -25,22 +24,13 @@ interface SlotData {
     project: Project | null;
 }
 
-const API_BASE = "";
-
-export default function CreatePage({ onMenuOpen, onNavigateToAuth }: { onMenuOpen: () => void; onNavigateToAuth: () => void }) {
+export default function CreatePage({ onMenuOpen, onNavigateToAuth, onOpenProject }: { onMenuOpen: () => void; onNavigateToAuth: () => void; onOpenProject: (slot: number) => void }) {
     const { user } = useAuthStore();
     const [slots, setSlots] = useState<SlotData[]>([]);
-    const [activeSlot, setActiveSlot] = useState<number | null>(null);
     const [creating, setCreating] = useState<number | null>(null);
     const [newName, setNewName] = useState("");
     const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
     const [error, setError] = useState<string | null>(null);
-
-    // Spotify auth state lifted up — persists across project switches
-    const [spotifyConnected, setSpotifyConnected] = useState(false);
-    const [spotifyChecked, setSpotifyChecked] = useState(false);
-
-    const activeProject = slots.find((s) => s.slot === activeSlot)?.project ?? null;
 
     const fetchSlots = useCallback(async () => {
         if (!user) return;
@@ -54,49 +44,11 @@ export default function CreatePage({ onMenuOpen, onNavigateToAuth }: { onMenuOpe
         }
     }, [user]);
 
-    // Check if already authenticated with Spotify on mount
-    const checkSpotifyAuth = useCallback(async () => {
-        try {
-            const res = await fetch(`${API_BASE}/api/spotify/auth-check`);
-            if (res.ok) {
-                const data = await res.json();
-                setSpotifyConnected(data.authenticated);
-            }
-        } catch {
-            // Server down or unreachable — leave as not connected
-        }
-        setSpotifyChecked(true);
-    }, []);
-
-    // Listen for Spotify OAuth popup messages at the page level
-    useEffect(() => {
-        const handleMessage = (e: MessageEvent) => {
-            if (e.data?.type !== "spotify-auth") return;
-            if (e.data.status === "connected") {
-                setSpotifyConnected(true);
-            }
-        };
-        window.addEventListener("message", handleMessage);
-
-        // Fallback redirect handling
-        const params = new URLSearchParams(window.location.search);
-        const spotifyParam = params.get("spotify");
-        if (spotifyParam === "connected") {
-            setSpotifyConnected(true);
-            window.history.replaceState({}, "", window.location.pathname);
-        } else if (spotifyParam === "error") {
-            window.history.replaceState({}, "", window.location.pathname);
-        }
-
-        return () => window.removeEventListener("message", handleMessage);
-    }, []);
-
     useEffect(() => {
         if (user) {
             fetchSlots();
-            checkSpotifyAuth();
         }
-    }, [user, fetchSlots, checkSpotifyAuth]);
+    }, [user, fetchSlots]);
 
     const handleCreate = async () => {
         if (!newName.trim() || creating === null) return;
@@ -111,10 +63,11 @@ export default function CreatePage({ onMenuOpen, onNavigateToAuth }: { onMenuOpe
                 const body = await res.json().catch(() => ({}));
                 throw new Error(body.detail || "Failed to create project");
             }
+            const createdSlot = creating;
             setCreating(null);
             setNewName("");
-            setActiveSlot(creating);
             await fetchSlots();
+            onOpenProject(createdSlot);
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
         }
@@ -125,20 +78,11 @@ export default function CreatePage({ onMenuOpen, onNavigateToAuth }: { onMenuOpe
         try {
             const res = await apiFetch(`/api/projects/${slot}`, { method: "DELETE" });
             if (!res.ok) throw new Error("Failed to delete project");
-            if (activeSlot === slot) setActiveSlot(null);
             setConfirmDelete(null);
             await fetchSlots();
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
         }
-    };
-
-    const handleSpotifySignIn = () => {
-        const url = `${API_BASE}/api/spotify/login`;
-        const w = 500, h = 700;
-        const left = window.screenX + (window.outerWidth - w) / 2;
-        const top = window.screenY + (window.outerHeight - h) / 2;
-        window.open(url, "spotify-auth", `width=${w},height=${h},left=${left},top=${top}`);
     };
 
     // Gate: require login
@@ -198,37 +142,6 @@ export default function CreatePage({ onMenuOpen, onNavigateToAuth }: { onMenuOpe
                     Select a project to get started, or create a new one.
                 </p>
 
-                {/* Spotify connection status */}
-                {spotifyChecked && (
-                    <div className="mb-8">
-                        {spotifyConnected ? (
-                            <div className="flex items-center gap-2 px-4 py-3 bg-[#1DB954]/10 border border-[#1DB954]/20 rounded-xl">
-                                <FaSpotify size={16} className="text-[#1DB954]" />
-                                <span className="text-sm font-mono text-[#1DB954] flex-1">Spotify connected</span>
-                                <button
-                                    onClick={async () => {
-                                        try {
-                                            await apiFetch("/api/spotify/logout", { method: "POST" });
-                                        } catch {}
-                                        setSpotifyConnected(false);
-                                    }}
-                                    className="text-xs font-mono text-zinc-500 hover:text-white transition-colors"
-                                >
-                                    Sign out
-                                </button>
-                            </div>
-                        ) : (
-                            <button
-                                onClick={handleSpotifySignIn}
-                                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-zinc-950 border border-white/10 rounded-xl hover:border-[#1DB954]/40 hover:shadow-[0_0_12px_rgba(29,185,84,0.15)] transition-all"
-                            >
-                                <FaSpotify size={16} className="text-[#1DB954]" />
-                                <span className="text-sm font-mono text-zinc-400">Sign in with Spotify</span>
-                            </button>
-                        )}
-                    </div>
-                )}
-
                 {/* Error banner */}
                 {error && (
                     <div className="mb-6 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-start gap-2">
@@ -245,7 +158,6 @@ export default function CreatePage({ onMenuOpen, onNavigateToAuth }: { onMenuOpe
                         Project Slots
                     </p>
                     {slots.map(({ slot, project }) => {
-                        const isActive = activeSlot === slot;
                         const isCreating = creating === slot;
 
                         if (isCreating) {
@@ -316,26 +228,18 @@ export default function CreatePage({ onMenuOpen, onNavigateToAuth }: { onMenuOpe
                         return (
                             <div
                                 key={slot}
-                                className={`relative bg-zinc-950 border rounded-xl transition-all ${
-                                    isActive
-                                        ? "border-[#e040fb]/50 shadow-[0_0_20px_rgba(224,64,251,0.1)]"
-                                        : "border-white/10 hover:border-white/20"
-                                }`}
+                                className="relative bg-zinc-950 border border-white/10 hover:border-white/20 rounded-xl transition-all"
                             >
                                 <button
-                                    onClick={() => setActiveSlot(isActive ? null : slot)}
+                                    onClick={() => onOpenProject(slot)}
                                     className="w-full flex items-center gap-3 px-4 py-4 text-left"
                                 >
                                     <span className="text-xs font-mono text-zinc-600 w-6 text-center shrink-0">
                                         {slot}
                                     </span>
-                                    {isActive ? (
-                                        <FaFolderOpen size={14} className="text-[#e040fb] shrink-0" />
-                                    ) : (
-                                        <FaFolder size={14} className="text-zinc-500 shrink-0" />
-                                    )}
+                                    <FaFolder size={14} className="text-zinc-500 shrink-0" />
                                     <div className="flex-1 min-w-0">
-                                        <p className={`text-sm font-mono truncate ${isActive ? "text-white" : "text-zinc-300"}`}>
+                                        <p className="text-sm font-mono truncate text-zinc-300">
                                             {project.name}
                                         </p>
                                         <p className="text-xs text-zinc-600 font-mono">
@@ -349,88 +253,42 @@ export default function CreatePage({ onMenuOpen, onNavigateToAuth }: { onMenuOpe
                                             })()}
                                         </p>
                                     </div>
-                                    {isActive && (
-                                        <span className="text-[10px] font-mono text-[#e040fb]/60 uppercase tracking-widest shrink-0">
-                                            Active
-                                        </span>
-                                    )}
+                                    <span className="text-zinc-600 text-xs font-mono">→</span>
                                 </button>
 
                                 {/* Delete button */}
-                                {isActive && (
-                                    <div className="px-4 pb-3 flex justify-end">
-                                        {confirmDelete === slot ? (
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-xs font-mono text-zinc-500">Delete?</span>
-                                                <button
-                                                    onClick={() => handleDelete(slot)}
-                                                    className="text-xs font-mono px-2 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
-                                                >
-                                                    Yes
-                                                </button>
-                                                <button
-                                                    onClick={() => setConfirmDelete(null)}
-                                                    className="text-xs font-mono px-2 py-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-colors"
-                                                >
-                                                    No
-                                                </button>
-                                            </div>
-                                        ) : (
+                                <div className="px-4 pb-3 flex justify-end">
+                                    {confirmDelete === slot ? (
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs font-mono text-zinc-500">Delete?</span>
                                             <button
-                                                onClick={() => setConfirmDelete(slot)}
-                                                className="text-zinc-600 hover:text-red-400 transition-colors p-1"
-                                                title="Delete project"
+                                                onClick={() => handleDelete(slot)}
+                                                className="text-xs font-mono px-2 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
                                             >
-                                                <FaTrash size={12} />
+                                                Yes
                                             </button>
-                                        )}
-                                    </div>
-                                )}
+                                            <button
+                                                onClick={() => setConfirmDelete(null)}
+                                                className="text-xs font-mono px-2 py-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-colors"
+                                            >
+                                                No
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <button
+                                            onClick={() => setConfirmDelete(slot)}
+                                            className="text-zinc-600 hover:text-red-400 transition-colors p-1"
+                                            title="Delete project"
+                                        >
+                                            <FaTrash size={12} />
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         );
                     })}
                 </div>
 
-                {/* Spotify Import Section - only if project is selected */}
-                <div className="space-y-6">
-                    <div
-                        className={`bg-zinc-950 border rounded-2xl p-6 transition-all ${
-                            activeProject && spotifyConnected
-                                ? "border-white/10"
-                                : "border-white/5 opacity-40"
-                        }`}
-                    >
-                        <h2 className="text-lg font-bold text-white mb-1">Spotify Import</h2>
-                        <p className="text-sm text-zinc-500 mb-5">
-                            {!spotifyConnected
-                                ? "Sign in with Spotify above to import playlists."
-                                : activeProject
-                                    ? `Import artists from Spotify into "${activeProject.name}".`
-                                    : "Select or create a project first to import playlists."}
-                        </p>
-                        {activeProject && spotifyConnected ? (
-                            <SpotifyImport
-                                projectSlot={activeSlot!}
-                                onImportComplete={fetchSlots}
-                                isConnected={spotifyConnected}
-                            />
-                        ) : (
-                            <div className="flex items-center gap-2 text-zinc-600 font-mono text-sm py-2">
-                                {!spotifyConnected ? (
-                                    <>
-                                        <FaSpotify size={14} />
-                                        <span>Spotify not connected</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <FaFolder size={14} />
-                                        <span>No project selected</span>
-                                    </>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                </div>
             </div>
         </div>
     );

@@ -540,7 +540,7 @@ class ProjectCreate(BaseModel):
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = None
-    playlist_urls: Optional[List[str]] = None
+    playlist_urls: Optional[list] = None
 
 
 def _load_user_project(user_id: str, slot: int) -> Optional[dict]:

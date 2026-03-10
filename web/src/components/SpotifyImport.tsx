@@ -238,9 +238,12 @@ export default function SpotifyImport({ projectSlot, onImportComplete, isConnect
     return (
         <div className="space-y-2">
             {/* Compact progress pill */}
-            <button
+            <div
                 onClick={() => setExpanded(!expanded)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setExpanded(!expanded); }}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer ${
                     error
                         ? "bg-red-500/10 border border-red-500/30"
                         : phase === "done"
@@ -300,7 +303,7 @@ export default function SpotifyImport({ projectSlot, onImportComplete, isConnect
                         <FaTimes size={12} />
                     </button>
                 )}
-            </button>
+            </div>
 
             {/* Expandable details panel */}
             {expanded && status && (phase === "importing" || phase === "done") && (

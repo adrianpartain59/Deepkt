@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import MenuPanel, { type PageTab } from "@/components/MenuPanel";
 import CreatePage from "@/components/CreatePage";
+import ProjectPage from "@/components/ProjectPage";
 import AboutPage from "@/components/AboutPage";
 import SettingsPage from "@/components/SettingsPage";
 import AuthPage from "@/components/AuthPage";
@@ -22,6 +23,7 @@ export default function Home() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<PageTab>("explore");
   const [showSettings, setShowSettings] = useState(false);
+  const [openProjectSlot, setOpenProjectSlot] = useState<number | null>(null);
 
   const { loadFromStorage, setTokensFromOAuth, user } = useAuthStore();
 
@@ -65,6 +67,7 @@ export default function Home() {
         onNavigate={(tab) => {
           setActiveTab(tab);
           setShowSettings(false);
+          if (tab !== "create") setOpenProjectSlot(null);
         }}
         onSettings={() => setShowSettings(true)}
       />
@@ -73,7 +76,19 @@ export default function Home() {
       <UniverseCanvas onMenuOpen={() => setMenuOpen(true)} activeTab={activeTab} />
 
       {/* Page overlays */}
-      {activeTab === "create" && <CreatePage onMenuOpen={() => setMenuOpen(true)} onNavigateToAuth={() => setActiveTab("auth")} />}
+      {activeTab === "create" && openProjectSlot !== null && (
+        <ProjectPage
+          projectSlot={openProjectSlot}
+          onBack={() => setOpenProjectSlot(null)}
+        />
+      )}
+      {activeTab === "create" && openProjectSlot === null && (
+        <CreatePage
+          onMenuOpen={() => setMenuOpen(true)}
+          onNavigateToAuth={() => setActiveTab("auth")}
+          onOpenProject={(slot) => setOpenProjectSlot(slot)}
+        />
+      )}
       {activeTab === "about" && <AboutPage onMenuOpen={() => setMenuOpen(true)} />}
       {activeTab === "auth" && <AuthPage onMenuOpen={() => setMenuOpen(true)} />}
       {showSettings && <SettingsPage onMenuOpen={() => setMenuOpen(true)} />}
