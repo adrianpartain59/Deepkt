@@ -55,9 +55,10 @@ async def _global_exception_handler(request: Request, exc: Exception):
         raise exc  # let FastAPI handle HTTPExceptions normally
     import traceback
     traceback.print_exc()
+    tb = traceback.format_exc()
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"},
+        content={"detail": f"{type(exc).__name__}: {exc}", "traceback": tb},
     )
 
 
@@ -751,8 +752,9 @@ def spotify_import(req: SpotifyImportRequest, user: UserClaims = Depends(get_cur
         return {"status": "started", "total_tracks": 0}
     except Exception as e:
         import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        tb = traceback.format_exc()
+        print(f"[spotify_import] {tb}")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}\n{tb}")
 
 
 @app.get("/api/spotify/status")
