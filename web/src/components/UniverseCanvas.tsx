@@ -62,6 +62,10 @@ const API_BASE = "";
 export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?: () => void; activeTab?: string }) {
     const [nodes, setNodes] = useState<UniverseNode[]>([]);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+    const [isMobile, setIsMobile] = useState(() => {
+        if (typeof window === "undefined") return false;
+        return window.innerWidth < 768;
+    });
     // scale for rendering-dependent values like edgeOpacity (synced lazily)
     const [scaleForRender, setScaleForRender] = useState(DEFAULT_ZOOM);
     const [focalTrack, setFocalTrack] = useState<UniverseNode | null>(null);
@@ -257,6 +261,7 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
                 width: window.innerWidth,
                 height: window.innerHeight,
             });
+            setIsMobile(window.innerWidth < 768);
         };
         handleResize();
         window.addEventListener("resize", handleResize);
@@ -333,6 +338,94 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
         scaleRenderTimerRef.current = setTimeout(() => {
             setScaleForRender(viewRef.current.scale);
         }, 150);
+    };
+
+    // 3b. Zoom Logic (Pinch with Fingers)
+    const lastDistRef = useRef(0);
+    const lastCenterRef = useRef<{x: number, y: number} | null>(null);
+
+    const getDistance = (p1: any, p2: any) => {
+        return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+    };
+
+    const getCenter = (p1: any, p2: any) => {
+        return {
+            x: (p1.x + p2.x) / 2,
+            y: (p1.y + p2.y) / 2,
+        };
+    };
+
+    const handleTouchMove = (e: any) => {
+        const stage = e.target.getStage();
+        if (!stage) return;
+        const touches = e.evt.touches;
+        if (touches && touches.length === 2) {
+            if (e.evt.cancelable) e.evt.preventDefault();
+            
+            const p1 = { x: touches[0].clientX, y: touches[0].clientY };
+            const p2 = { x: touches[1].clientX, y: touches[1].clientY };
+            
+            if (!lastCenterRef.current || !lastDistRef.current) {
+                lastDistRef.current = getDistance(p1, p2);
+                lastCenterRef.current = getCenter(p1, p2);
+                return;
+            }
+
+            const newDist = getDistance(p1, p2);
+            const newCenter = getCenter(p1, p2);
+
+            const scaleBy = newDist / lastDistRef.current;
+            const v = viewRef.current;
+            
+            const newScale = v.scale * scaleBy;
+            const clampedScale = Math.min(Math.max(newScale, 0.001), 20.0);
+
+            const cx = newCenter.x;
+            const cy = newCenter.y;
+
+            const centerPointTo = {
+                x: (cx - v.x) / v.scale,
+                y: (cy - v.y) / v.scale,
+            };
+
+            const dx = newCenter.x - lastCenterRef.current.x;
+            const dy = newCenter.y - lastCenterRef.current.y;
+
+            viewRef.current = {
+                scale: clampedScale,
+                x: cx - centerPointTo.x * clampedScale + dx,
+                y: cy - centerPointTo.y * clampedScale + dy,
+            };
+
+            stage.x(viewRef.current.x);
+            stage.y(viewRef.current.y);
+            stage.scaleX(clampedScale);
+            stage.scaleY(clampedScale);
+            stage.batchDraw();
+            prevViewRef.current = { ...viewRef.current };
+
+            lastDistRef.current = newDist;
+            lastCenterRef.current = newCenter;
+
+            zoomCooldownRef.current = performance.now() + 1000;
+            isInteractingRef.current = true;
+            if (!isInteracting) setIsInteracting(true);
+            if (interactionTimerRef.current) clearTimeout(interactionTimerRef.current);
+            interactionTimerRef.current = setTimeout(() => {
+                isInteractingRef.current = false;
+                setIsInteracting(false);
+            }, 300);
+
+            if (scaleRenderTimerRef.current) clearTimeout(scaleRenderTimerRef.current);
+            scaleRenderTimerRef.current = setTimeout(() => {
+                setScaleForRender(viewRef.current.scale);
+            }, 150);
+        }
+    };
+
+    const handleTouchEnd = () => {
+        lastDistRef.current = 0;
+        lastCenterRef.current = null;
     };
 
     const stageRef = useRef<any>(null);
@@ -953,19 +1046,23 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
         >
 
             {/* Top Left: Menu Button + AMBIS Title */}
-            <div className="absolute top-6 left-6 z-10 flex items-center gap-4">
+            <div className={`absolute top-6 left-6 z-10 flex items-center gap-4`}>
                 <button
-                    onClick={(e) => { e.stopPropagation(); onMenuOpen?.(); }}
-                    className="text-zinc-400 hover:text-white transition-colors pointer-events-auto p-1"
-                    title="Menu"
+                    onClick={(e) => { 
+                        e.stopPropagation(); 
+                        if (!isMobile) onMenuOpen?.(); 
+                    }}
+                    className={`transition-colors pointer-events-auto p-1 ${isMobile ? 'text-zinc-700 cursor-not-allowed opacity-50' : 'text-zinc-400 hover:text-white'}`}
+                    title={isMobile ? "Menu disabled in demo" : "Menu"}
+                    disabled={isMobile}
                 >
                     <FaBars size={22} />
                 </button>
                 <div className="pointer-events-none">
-                    <h1 className="text-6xl font-normal text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider title-glow" style={{ fontFamily: 'var(--font-maswen)' }}>
+                    <h1 className={`font-normal text-transparent bg-clip-text bg-gradient-to-r from-[#e040fb] to-[#00e5ff] uppercase tracking-wider title-glow ${isMobile ? 'text-4xl' : 'text-6xl'}`} style={{ fontFamily: 'var(--font-maswen)' }}>
                         AMBIS
                     </h1>
-                    <p className="text-m text-zinc-500 font-mono mt-1">
+                    <p className={`text-zinc-500 font-mono mt-1 ${isMobile ? 'text-xs' : 'text-sm'}`}>
                         {nodes.length > 0 ? `${nodes.length} nodes active` : 'Initializing Map...'}
                     </p>
                 </div>
@@ -973,8 +1070,8 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
 
             {/* Top Center: Focal Track HUD */}
             {focalTrack && (
-                <div className="absolute top-6 left-1/2 -translate-x-1/2 z-40">
-                    <div className="bg-black/80 backdrop-blur-md border border-[#e040fb]/30 px-5 py-3 rounded-xl flex items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-300 max-w-[30rem] shadow-[0_0_25px_rgba(224,64,251,0.2)] pointer-events-auto">
+                <div className={`absolute left-1/2 -translate-x-1/2 z-40 ${isMobile ? 'top-[5rem]' : 'top-6'}`}>
+                    <div className={`bg-black/80 backdrop-blur-md border border-[#e040fb]/30 rounded-xl flex items-center shadow-[0_0_25px_rgba(224,64,251,0.2)] pointer-events-auto animate-in fade-in slide-in-from-top-4 duration-300 ${isMobile ? 'px-3 py-2 gap-2 max-w-[90vw] whitespace-nowrap' : 'px-5 py-3 gap-4 max-w-[30rem]'}`}>
                         {historyIndexRef.current > 0 && (
                             <button
                                 onClick={(e) => {
@@ -1026,14 +1123,14 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
                             <p className="text-sm text-zinc-400 truncate">{focalTrack.artist}</p>
                         </div>
                         {audioState === 'loading' ? (
-                            <div className="w-[80px] h-[32px] shrink-0 flex items-center justify-center">
-                                <div className="w-4 h-4 border-2 border-[#00e5ff] border-t-transparent rounded-full animate-spin" />
+                            <div className={`${isMobile ? 'w-[40px] h-[20px]' : 'w-[80px] h-[32px]'} shrink-0 flex items-center justify-center`}>
+                                <div className={`${isMobile ? 'w-3 h-3' : 'w-4 h-4'} border-2 border-[#00e5ff] border-t-transparent rounded-full animate-spin`} />
                             </div>
                         ) : (
                             <canvas
                                 ref={scopeCanvasRef}
-                                width={80}
-                                height={32}
+                                width={isMobile ? 40 : 80}
+                                height={isMobile ? 20 : 32}
                                 className="shrink-0 opacity-80"
                             />
                         )}
@@ -1062,16 +1159,16 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
             )}
 
             {/* Top Right: Platform Switcher + Search Bar + Spotify Import */}
-            <div className="absolute top-6 right-10 z-30 flex items-start gap-2">
+            <div className={`absolute top-6 z-30 flex items-start gap-2 ${isMobile ? 'right-4' : 'right-10'}`}>
                 {/* Platform Switcher */}
                 <div ref={platformDropdownRef} className="relative">
                     <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setPlatformOpen(prev => !prev); }}
-                        className="flex items-center justify-center gap-1.5 bg-black/80 backdrop-blur-md border border-white/20 rounded-full px-4 transition-all hover:border-white/40 h-[46px]"
+                        className={`flex items-center justify-center gap-1.5 bg-black/80 backdrop-blur-md border border-white/20 rounded-full transition-all hover:border-white/40 ${isMobile ? 'px-3 h-[38px]' : 'px-4 h-[46px]'}`}
                         title={`Listening on ${PLATFORMS[platform].label}`}
                     >
-                        <span style={{ color: PLATFORMS[platform].color }}>{React.createElement(PLATFORMS[platform].icon, { size: 16 })}</span>
+                        <span style={{ color: PLATFORMS[platform].color }}>{React.createElement(PLATFORMS[platform].icon, { size: isMobile ? 14 : 16 })}</span>
                         <FaChevronDown size={10} className={`text-zinc-500 transition-transform ${platformOpen ? 'rotate-180' : ''}`} />
                     </button>
                     {platformOpen && (
@@ -1096,16 +1193,18 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
                     )}
                 </div>
 
-                {/* Search Bar */}
-                <div className="relative w-64">
-                    <form onSubmit={handleSearch} className="relative">
-                        <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Search artist or title..."
-                            className="w-full bg-black/80 backdrop-blur-md border border-white/20 rounded-full py-3 px-5 text-sm font-mono text-white placeholder-zinc-500 focus:outline-none focus:border-[#00e5ff] focus:ring-1 focus:ring-[#00e5ff] transition-all"
-                        />
+                {/* Search Bar / Random */}
+                <div className={`relative ${isMobile ? 'w-auto' : 'w-64'}`}>
+                    <form onSubmit={handleSearch} className="relative h-full flex items-center">
+                        {!isMobile && (
+                            <input
+                                type="text"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                placeholder="Search artist or title..."
+                                className="w-full bg-black/80 backdrop-blur-md border border-white/20 rounded-full py-3 px-5 text-sm font-mono text-white placeholder-zinc-500 focus:outline-none focus:border-[#00e5ff] focus:ring-1 focus:ring-[#00e5ff] transition-all"
+                            />
+                        )}
                         <button
                             type="button"
                             onClick={(e) => {
@@ -1116,13 +1215,13 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
                                 setSearchResults([]);
                                 setSearchQuery("");
                             }}
-                            className="absolute right-2 top-2 bottom-2 px-4 rounded-full bg-white/10 hover:bg-white/20 text-xs font-bold transition-colors"
+                            className={`${isMobile ? 'relative h-[38px] px-4 rounded-full bg-white/10 hover:bg-white/20 text-xs font-bold transition-colors' : 'absolute right-2 top-2 bottom-2 px-4 rounded-full bg-white/10 hover:bg-white/20 text-xs font-bold transition-colors'}`}
                         >
                             RANDOM
                         </button>
                     </form>
 
-                    {searchResults.length > 0 && (
+                    {!isMobile && searchResults.length > 0 && (
                         <div className="absolute top-full left-0 right-0 mt-2 bg-black/90 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl max-h-[70vh] overflow-y-auto">
                             {searchResults.map((result, i) => (
                                 <div
@@ -1389,6 +1488,8 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
                     viewRef.current.y = e.target.y();
                     zoomCooldownRef.current = performance.now() + 600;
                 }}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
                 onClick={(e) => {
                     if (isDraggingRef.current) return;
                     const stage = e.target.getStage();
