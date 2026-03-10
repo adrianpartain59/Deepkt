@@ -6,10 +6,17 @@ import SpotifyImport from "./SpotifyImport";
 import useAuthStore from "@/stores/authStore";
 import { apiFetch } from "@/lib/api";
 
+interface ArtistEntry {
+    artist: string;
+    sc_url: string;
+    sc_username: string;
+    tracks: { title: string; sc_track_url: string }[];
+}
+
 interface Project {
     name: string;
     slot: number;
-    playlist_urls: string[];
+    playlist_urls: (string | ArtistEntry)[];
     created_at: string;
 }
 
@@ -332,7 +339,14 @@ export default function CreatePage({ onMenuOpen, onNavigateToAuth }: { onMenuOpe
                                             {project.name}
                                         </p>
                                         <p className="text-xs text-zinc-600 font-mono">
-                                            {project.playlist_urls.length} artist{project.playlist_urls.length !== 1 ? "s" : ""}
+                                            {(() => {
+                                                const artists = project.playlist_urls.filter((e): e is ArtistEntry => typeof e === "object" && "tracks" in e);
+                                                const trackCount = artists.reduce((sum, a) => sum + a.tracks.length, 0);
+                                                if (artists.length > 0) {
+                                                    return `${artists.length} artist${artists.length !== 1 ? "s" : ""} · ${trackCount} track${trackCount !== 1 ? "s" : ""}`;
+                                                }
+                                                return `${project.playlist_urls.length} artist${project.playlist_urls.length !== 1 ? "s" : ""}`;
+                                            })()}
                                         </p>
                                     </div>
                                     {isActive && (

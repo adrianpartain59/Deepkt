@@ -18,7 +18,7 @@ interface ImportStatus {
     processed: number;
     matched_count: number;
     unmatched_count: number;
-    matched: { artist: string; sc_url: string; sc_username: string }[];
+    matched: { artist: string; title: string; sc_url: string; sc_username: string; sc_track_url: string }[];
     unmatched: { artist: string; title: string }[];
     error: string;
 }
@@ -269,7 +269,7 @@ export default function SpotifyImport({ projectSlot, onImportComplete, isConnect
                     )}
                     {phase === "done" && !error && (
                         <span className="text-sm font-mono text-[#1DB954]">
-                            Complete — {status?.matched_count ?? 0} artists found
+                            Complete — {status?.matched_count ?? 0} tracks found
                         </span>
                     )}
                     {error && (
@@ -322,14 +322,13 @@ export default function SpotifyImport({ projectSlot, onImportComplete, isConnect
                         {status.matched.map((m, i) => (
                             <div key={`m-${i}`} className="flex items-center gap-2 px-2 py-1.5 rounded-lg">
                                 <FaCheck size={8} className="text-[#1DB954] shrink-0" />
-                                <span className="text-xs text-white truncate">{m.artist}</span>
-                                <span className="text-xs text-zinc-600 truncate ml-auto">{m.sc_username}</span>
+                                <span className="text-xs text-white truncate">{m.artist} — {m.title}</span>
                             </div>
                         ))}
                         {status.unmatched.map((u, i) => (
                             <div key={`u-${i}`} className="flex items-center gap-2 px-2 py-1.5 rounded-lg">
                                 <FaTimes size={8} className="text-zinc-600 shrink-0" />
-                                <span className="text-xs text-zinc-500 truncate">{u.artist}</span>
+                                <span className="text-xs text-zinc-500 truncate">{u.artist} — {u.title}</span>
                             </div>
                         ))}
                     </div>

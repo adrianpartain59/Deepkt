@@ -1,7 +1,7 @@
 """Cross-reference Spotify (artist, title) pairs against SoundCloud track search.
 
 For each pair, search SoundCloud for the track, confirm both artist name and
-track title match, and collect the artist's SoundCloud profile URL.
+track title match, and collect the matched track URL and artist profile URL.
 """
 
 import os
@@ -85,7 +85,11 @@ def cross_reference_tracks(
     rate_limit: float = 1.0,
     progress: Optional[CrossRefProgress] = None,
 ) -> CrossRefProgress:
-    """Search SoundCloud for each (artist, title) pair and collect matched artist URLs.
+    """Search SoundCloud for each (artist, title) pair and collect matched tracks.
+
+    Every track is searched individually. Matched results include the SoundCloud
+    track URL and artist profile URL. Results are stored per-track so the caller
+    can group them by artist.
 
     Args:
         track_pairs: List of {"artist": str, "title": str} dicts.
@@ -104,20 +108,25 @@ def cross_reference_tracks(
     if progress is None:
         progress = CrossRefProgress()
 
-    seen_artists: dict[str, str] = {}
+    # Deduplicate by (artist, title) pair
+    seen_pairs: set[str] = set()
     unique_pairs: list[dict] = []
     for pair in track_pairs:
-        key = _normalize(pair["artist"])
-        if key in seen_artists:
+        key = f"{_normalize(pair['artist'])}||{_normalize(pair['title'])}"
+        if key in seen_pairs:
             continue
+        seen_pairs.add(key)
         unique_pairs.append(pair)
-        seen_artists[key] = ""
+
+    # Cache artist profile URL once found so we don't lose it
+    artist_profile_cache: dict[str, str] = {}  # norm_artist -> sc_profile_url
+    artist_username_cache: dict[str, str] = {}  # norm_artist -> sc_username
 
     progress.total = len(unique_pairs)
     progress.state = "running"
 
     console.print(
-        f"\n[bold cyan]Cross-referencing {progress.total} unique artists on SoundCloud...[/bold cyan]"
+        f"\n[bold cyan]Cross-referencing {progress.total} tracks on SoundCloud...[/bold cyan]"
     )
 
     for pair in unique_pairs:
@@ -129,10 +138,6 @@ def cross_reference_tracks(
         title = pair["title"]
         norm_artist = _normalize(artist)
 
-        if norm_artist in seen_artists and seen_artists[norm_artist]:
-            progress.processed += 1
-            continue
-
         query = f"{artist} {title}"
         results = spider.search_tracks(query, limit=5)
 
@@ -142,18 +147,24 @@ def cross_reference_tracks(
             sc_username = sc_user.get("username", "")
             sc_title = result.get("title", "")
             sc_profile_url = sc_user.get("permalink_url", "")
+            sc_track_url = result.get("permalink_url", "")
 
             if _names_match(artist, sc_username) and _titles_match(title, sc_title) and sc_profile_url:
-                if not seen_artists.get(norm_artist):
-                    seen_artists[norm_artist] = sc_profile_url
-                    progress.matched.append({
-                        "artist": artist,
-                        "sc_url": sc_profile_url,
-                        "sc_username": sc_username,
-                    })
-                    console.print(
-                        f"  [green]MATCH:[/green] {artist} -> {sc_profile_url}"
-                    )
+                # Cache the artist profile for this normalized name
+                if norm_artist not in artist_profile_cache:
+                    artist_profile_cache[norm_artist] = sc_profile_url
+                    artist_username_cache[norm_artist] = sc_username
+
+                progress.matched.append({
+                    "artist": artist,
+                    "title": title,
+                    "sc_url": artist_profile_cache[norm_artist],
+                    "sc_username": artist_username_cache[norm_artist],
+                    "sc_track_url": sc_track_url,
+                })
+                console.print(
+                    f"  [green]MATCH:[/green] {artist} - {title} -> {sc_track_url}"
+                )
                 matched = True
                 break
 
@@ -167,11 +178,34 @@ def cross_reference_tracks(
     progress.state = "done"
     console.print(
         f"\n[bold cyan]Cross-reference complete:[/bold cyan] "
-        f"[green]{len(progress.matched)} matched[/green], "
+        f"[green]{len(progress.matched)} tracks matched[/green], "
         f"[red]{len(progress.unmatched)} unmatched[/red]"
     )
 
     return progress
+
+
+def group_by_artist(matched: list[dict]) -> list[dict]:
+    """Group matched results by artist.
+
+    Returns:
+        List of {artist, sc_url, sc_username, tracks: [{title, sc_track_url}]}
+    """
+    artists: dict[str, dict] = {}
+    for m in matched:
+        key = _normalize(m["artist"])
+        if key not in artists:
+            artists[key] = {
+                "artist": m["artist"],
+                "sc_url": m["sc_url"],
+                "sc_username": m["sc_username"],
+                "tracks": [],
+            }
+        artists[key]["tracks"].append({
+            "title": m["title"],
+            "sc_track_url": m.get("sc_track_url", ""),
+        })
+    return list(artists.values())
 
 
 def save_seed_artists(progress: CrossRefProgress, filepath: str = SEED_OUTPUT_FILE):

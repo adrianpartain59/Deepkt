@@ -687,7 +687,7 @@ def spotify_import(req: SpotifyImportRequest, user: UserClaims = Depends(get_cur
 
     def _run():
         try:
-            from deepkt.cross_reference import cross_reference_tracks, save_seed_artists
+            from deepkt.cross_reference import cross_reference_tracks, save_seed_artists, group_by_artist
 
             # Fetch tracks inside the background thread to avoid request timeout
             all_tracks: list[dict] = []
@@ -714,14 +714,33 @@ def spotify_import(req: SpotifyImportRequest, user: UserClaims = Depends(get_cur
                 except Exception:
                     pass  # flat file is optional, user data goes to DB
 
-                # Save matched artist URLs to the user's project
+                # Save matched tracks grouped by artist to the user's project
                 if project_slot and 1 <= project_slot <= MAX_PROJECT_SLOTS:
                     proj = _load_user_project(uid, project_slot)
                     if proj:
-                        existing_urls = set(proj.get("playlist_urls", []))
-                        for m in progress.matched:
-                            existing_urls.add(m["sc_url"])
-                        _save_user_project(uid, project_slot, proj["name"], list(existing_urls))
+                        # Merge new results with existing project data
+                        existing = proj.get("playlist_urls", [])
+                        # Build lookup of existing artists by sc_url
+                        existing_by_url: dict[str, dict] = {}
+                        for entry in existing:
+                            if isinstance(entry, dict) and "sc_url" in entry:
+                                existing_by_url[entry["sc_url"]] = entry
+
+                        grouped = group_by_artist(progress.matched)
+                        for artist_data in grouped:
+                            sc_url = artist_data["sc_url"]
+                            if sc_url in existing_by_url:
+                                # Merge new tracks into existing artist entry
+                                old_tracks = existing_by_url[sc_url].get("tracks", [])
+                                old_track_urls = {t.get("sc_track_url") for t in old_tracks}
+                                for t in artist_data["tracks"]:
+                                    if t.get("sc_track_url") not in old_track_urls:
+                                        old_tracks.append(t)
+                                existing_by_url[sc_url]["tracks"] = old_tracks
+                            else:
+                                existing_by_url[sc_url] = artist_data
+
+                        _save_user_project(uid, project_slot, proj["name"], list(existing_by_url.values()))
         except Exception as e:
             import traceback
             traceback.print_exc()
