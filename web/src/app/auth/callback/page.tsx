@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import useAuthStore from "@/stores/authStore";
 
-export default function AuthCallbackPage() {
+function CallbackHandler() {
     const searchParams = useSearchParams();
     const router = useRouter();
 
@@ -32,9 +32,15 @@ export default function AuthCallbackPage() {
         router.replace("/");
     }, [searchParams, router]);
 
+    return <p className="text-zinc-400 font-mono text-sm">Authenticating...</p>;
+}
+
+export default function AuthCallbackPage() {
     return (
         <div className="min-h-screen bg-black flex items-center justify-center">
-            <p className="text-zinc-400 font-mono text-sm">Authenticating...</p>
+            <Suspense fallback={<p className="text-zinc-400 font-mono text-sm">Authenticating...</p>}>
+                <CallbackHandler />
+            </Suspense>
         </div>
     );
 }
