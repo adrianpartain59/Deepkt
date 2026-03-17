@@ -606,6 +606,40 @@ def delete_project(slot: int, user: UserClaims = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
+# Liked Tracks (per-user, SQL-backed)
+# ---------------------------------------------------------------------------
+
+
+class LikedTracksSync(BaseModel):
+    track_ids: List[str]
+
+
+@app.get("/api/likes")
+def get_likes(user: UserClaims = Depends(get_current_user)):
+    """Return all liked track IDs for the current user, most-recent-first."""
+    return {"track_ids": user_db.get_liked_tracks(user.user_id)}
+
+
+@app.post("/api/likes/{track_id}")
+def add_like(track_id: str, user: UserClaims = Depends(get_current_user)):
+    user_db.add_liked_track(user.user_id, track_id)
+    return {"status": "liked", "track_id": track_id}
+
+
+@app.delete("/api/likes/{track_id}")
+def remove_like(track_id: str, user: UserClaims = Depends(get_current_user)):
+    user_db.remove_liked_track(user.user_id, track_id)
+    return {"status": "unliked", "track_id": track_id}
+
+
+@app.put("/api/likes")
+def sync_likes(req: LikedTracksSync, user: UserClaims = Depends(get_current_user)):
+    """Bulk replace all liked tracks (used for initial sync from localStorage)."""
+    user_db.set_liked_tracks(user.user_id, req.track_ids)
+    return {"status": "synced", "count": len(req.track_ids)}
+
+
+# ---------------------------------------------------------------------------
 # Spotify OAuth + Playlist Import
 # ---------------------------------------------------------------------------
 
@@ -666,20 +700,41 @@ def spotify_playlists(user: UserClaims = Depends(get_current_user)):
         raise HTTPException(status_code=502, detail=f"Spotify API error: {e}")
 
 
+class ImportProgress:
+    """Simple progress tracker for Spotify imports (replaces CrossRefProgress)."""
+    def __init__(self):
+        self.state = "running"
+        self.total = 0
+        self.processed = 0
+        self.error = ""
+        self.cancelled = False
+
+    def to_dict(self):
+        return {
+            "state": self.state,
+            "total": self.total,
+            "processed": self.processed,
+            "matched_count": self.processed,
+            "unmatched_count": 0,
+            "matched": [],
+            "unmatched": [],
+            "error": self.error,
+        }
+
+
 @app.post("/api/spotify/import")
 def spotify_import(req: SpotifyImportRequest, user: UserClaims = Depends(get_current_user)):
     from deepkt.spotify import is_authenticated, get_playlist_tracks
-    from deepkt.cross_reference import CrossRefProgress
 
     if not is_authenticated():
         raise HTTPException(status_code=401, detail="Not authenticated with Spotify")
 
     with _import_lock:
         existing = _import_progress.get(user.user_id)
-        if existing and existing.state == "running":
+        if existing and getattr(existing, "state", None) == "running":
             raise HTTPException(status_code=409, detail="Import already in progress")
 
-    progress = CrossRefProgress()
+    progress = ImportProgress()
 
     project_slot = req.project_slot
     uid = user.user_id
@@ -687,9 +742,6 @@ def spotify_import(req: SpotifyImportRequest, user: UserClaims = Depends(get_cur
 
     def _run():
         try:
-            from deepkt.cross_reference import cross_reference_tracks, save_seed_artists, group_by_artist
-
-            # Fetch tracks inside the background thread to avoid request timeout
             all_tracks: list[dict] = []
             for pid in playlist_ids:
                 if progress.cancelled:
@@ -707,40 +759,36 @@ def spotify_import(req: SpotifyImportRequest, user: UserClaims = Depends(get_cur
                 progress.state = "done"
                 return
 
-            cross_reference_tracks(all_tracks, rate_limit=1.0, progress=progress)
-            if not progress.cancelled:
-                try:
-                    save_seed_artists(progress)
-                except Exception:
-                    pass  # flat file is optional, user data goes to DB
+            progress.total = len(all_tracks)
+            progress.processed = len(all_tracks)
 
-                # Save matched tracks grouped by artist to the user's project
-                if project_slot and 1 <= project_slot <= MAX_PROJECT_SLOTS:
-                    proj = _load_user_project(uid, project_slot)
-                    if proj:
-                        # Merge new results with existing project data
-                        existing = proj.get("playlist_urls", [])
-                        # Build lookup of existing artists by sc_url
-                        existing_by_url: dict[str, dict] = {}
-                        for entry in existing:
-                            if isinstance(entry, dict) and "sc_url" in entry:
-                                existing_by_url[entry["sc_url"]] = entry
+            # Group tracks by artist — save raw Spotify data directly
+            if project_slot and 1 <= project_slot <= MAX_PROJECT_SLOTS:
+                proj = _load_user_project(uid, project_slot)
+                if proj:
+                    by_artist: dict[str, list[dict]] = {}
+                    for t in all_tracks:
+                        by_artist.setdefault(t["artist"], []).append({"title": t["title"]})
 
-                        grouped = group_by_artist(progress.matched)
-                        for artist_data in grouped:
-                            sc_url = artist_data["sc_url"]
-                            if sc_url in existing_by_url:
-                                # Merge new tracks into existing artist entry
-                                old_tracks = existing_by_url[sc_url].get("tracks", [])
-                                old_track_urls = {t.get("sc_track_url") for t in old_tracks}
-                                for t in artist_data["tracks"]:
-                                    if t.get("sc_track_url") not in old_track_urls:
-                                        old_tracks.append(t)
-                                existing_by_url[sc_url]["tracks"] = old_tracks
-                            else:
-                                existing_by_url[sc_url] = artist_data
+                    # Merge with existing project data
+                    existing_entries = proj.get("playlist_urls", [])
+                    existing_by_artist: dict[str, dict] = {}
+                    for entry in existing_entries:
+                        if isinstance(entry, dict) and "artist" in entry:
+                            existing_by_artist[entry["artist"]] = entry
 
-                        _save_user_project(uid, project_slot, proj["name"], list(existing_by_url.values()))
+                    for artist, tracks in by_artist.items():
+                        if artist in existing_by_artist:
+                            old_titles = {t.get("title") for t in existing_by_artist[artist].get("tracks", [])}
+                            for t in tracks:
+                                if t["title"] not in old_titles:
+                                    existing_by_artist[artist]["tracks"].append(t)
+                        else:
+                            existing_by_artist[artist] = {"artist": artist, "tracks": tracks}
+
+                    _save_user_project(uid, project_slot, proj["name"], list(existing_by_artist.values()))
+
+            progress.state = "done"
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -770,6 +818,51 @@ def spotify_abort(user: UserClaims = Depends(get_current_user)):
     if progress and progress.state == "running":
         progress.cancelled = True
     return {"status": "aborted"}
+
+
+# ---------------------------------------------------------------------------
+# Genre Analysis (Claude Haiku)
+# ---------------------------------------------------------------------------
+
+class AnalyzeRequest(BaseModel):
+    query: Optional[str] = None
+
+
+@app.post("/api/projects/{slot}/analyze")
+@limiter.limit("10/minute")
+def analyze_project(slot: int, req: AnalyzeRequest, request: Request,
+                    user: UserClaims = Depends(get_current_user)):
+    """Analyze project artists via Claude Haiku for genre tags + artist expansion."""
+    if slot < 1 or slot > MAX_PROJECT_SLOTS:
+        raise HTTPException(status_code=400, detail=f"Slot must be 1-{MAX_PROJECT_SLOTS}")
+
+    proj = _load_user_project(user.user_id, slot)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Empty slot")
+
+    from deepkt.llm import analyze_artists
+
+    # Extract artists and tracks from project data
+    artists: list[str] = []
+    tracks: list[dict] = []
+    for entry in proj.get("playlist_urls", []):
+        if isinstance(entry, dict) and "artist" in entry:
+            artists.append(entry["artist"])
+            for t in entry.get("tracks", []):
+                tracks.append({"artist": entry["artist"], "title": t.get("title", "")})
+
+    if not req.query and not artists:
+        raise HTTPException(status_code=400, detail="No artists in project and no query provided")
+
+    result = analyze_artists(artists=artists, tracks=tracks or None, user_query=req.query)
+
+    if result.get("status") == "failed" and "not configured" in (result.get("message") or ""):
+        raise HTTPException(status_code=503, detail=result["message"])
+
+    # Save to database
+    user_db.save_project_llm_output(user.user_id, slot, result)
+
+    return result
 
 
 if __name__ == "__main__":

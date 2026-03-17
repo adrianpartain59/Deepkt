@@ -79,7 +79,21 @@ def _init_pg_tables():
                 ON users(auth_provider, provider_id) WHERE provider_id IS NOT NULL;
 
             CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
+
+            CREATE TABLE IF NOT EXISTS liked_tracks (
+                user_id     TEXT NOT NULL REFERENCES users(id),
+                track_id    TEXT NOT NULL,
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                PRIMARY KEY (user_id, track_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_liked_tracks_user ON liked_tracks(user_id);
         """)
+        # Migration: add llm_output column to projects
+        try:
+            cur.execute("ALTER TABLE projects ADD COLUMN llm_output TEXT")
+        except Exception:
+            conn.rollback()
         conn.commit()
     finally:
         _get_pg_pool().putconn(conn)
@@ -274,6 +288,8 @@ def load_user_project(user_id: str, slot: int) -> Optional[dict]:
                 return None
             d = dict(row)
             d["playlist_urls"] = json.loads(d.get("playlist_urls", "[]"))
+            if d.get("llm_output"):
+                d["llm_output"] = json.loads(d["llm_output"])
             return d
         finally:
             _put_pg_conn(conn)
@@ -288,6 +304,8 @@ def load_user_project(user_id: str, slot: int) -> Optional[dict]:
             return None
         d = dict(row)
         d["playlist_urls"] = json.loads(d.get("playlist_urls", "[]"))
+        if d.get("llm_output"):
+            d["llm_output"] = json.loads(d["llm_output"])
         return d
 
 
@@ -350,5 +368,137 @@ def delete_user_project(user_id: str, slot: int):
         from deepkt import db as trackdb
         conn = trackdb.get_db()
         conn.execute("DELETE FROM projects WHERE user_id = ? AND slot = ?", (user_id, slot))
+        conn.commit()
+        conn.close()
+
+
+def save_project_llm_output(user_id: str, slot: int, llm_output: dict):
+    """Save LLM analysis output to a project."""
+    now = datetime.now(timezone.utc).isoformat()
+    llm_json = json.dumps(llm_output)
+    if _use_postgres():
+        conn = _get_pg_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE projects SET llm_output = %s, updated_at = %s WHERE user_id = %s AND slot = %s",
+                (llm_json, now, user_id, slot),
+            )
+            conn.commit()
+        finally:
+            _put_pg_conn(conn)
+    else:
+        from deepkt import db as trackdb
+        conn = trackdb.get_db()
+        conn.execute(
+            "UPDATE projects SET llm_output = ?, updated_at = ? WHERE user_id = ? AND slot = ?",
+            (llm_json, now, user_id, slot),
+        )
+        conn.commit()
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Liked tracks operations
+# ---------------------------------------------------------------------------
+
+def get_liked_tracks(user_id: str) -> list[str]:
+    """Return list of track IDs liked by user, most-recent-first."""
+    if _use_postgres():
+        conn = _get_pg_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT track_id FROM liked_tracks WHERE user_id = %s ORDER BY created_at DESC",
+                (user_id,),
+            )
+            return [row[0] for row in cur.fetchall()]
+        finally:
+            _put_pg_conn(conn)
+    else:
+        from deepkt import db as trackdb
+        conn = trackdb.get_db()
+        rows = conn.execute(
+            "SELECT track_id FROM liked_tracks WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+        conn.close()
+        return [row[0] for row in rows]
+
+
+def add_liked_track(user_id: str, track_id: str):
+    """Like a track. No-op if already liked."""
+    now = datetime.now(timezone.utc).isoformat()
+    if _use_postgres():
+        conn = _get_pg_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO liked_tracks (user_id, track_id, created_at) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                (user_id, track_id, now),
+            )
+            conn.commit()
+        finally:
+            _put_pg_conn(conn)
+    else:
+        from deepkt import db as trackdb
+        conn = trackdb.get_db()
+        conn.execute(
+            "INSERT OR IGNORE INTO liked_tracks (user_id, track_id, created_at) VALUES (?, ?, ?)",
+            (user_id, track_id, now),
+        )
+        conn.commit()
+        conn.close()
+
+
+def remove_liked_track(user_id: str, track_id: str):
+    """Unlike a track."""
+    if _use_postgres():
+        conn = _get_pg_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM liked_tracks WHERE user_id = %s AND track_id = %s",
+                (user_id, track_id),
+            )
+            conn.commit()
+        finally:
+            _put_pg_conn(conn)
+    else:
+        from deepkt import db as trackdb
+        conn = trackdb.get_db()
+        conn.execute(
+            "DELETE FROM liked_tracks WHERE user_id = ? AND track_id = ?",
+            (user_id, track_id),
+        )
+        conn.commit()
+        conn.close()
+
+
+def set_liked_tracks(user_id: str, track_ids: list[str]):
+    """Replace all liked tracks for a user (used for bulk sync from client)."""
+    now = datetime.now(timezone.utc).isoformat()
+    if _use_postgres():
+        conn = _get_pg_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM liked_tracks WHERE user_id = %s", (user_id,))
+            for tid in track_ids:
+                cur.execute(
+                    "INSERT INTO liked_tracks (user_id, track_id, created_at) VALUES (%s, %s, %s)",
+                    (user_id, tid, now),
+                )
+            conn.commit()
+        finally:
+            _put_pg_conn(conn)
+    else:
+        from deepkt import db as trackdb
+        conn = trackdb.get_db()
+        conn.execute("DELETE FROM liked_tracks WHERE user_id = ?", (user_id,))
+        for tid in track_ids:
+            conn.execute(
+                "INSERT INTO liked_tracks (user_id, track_id, created_at) VALUES (?, ?, ?)",
+                (user_id, tid, now),
+            )
         conn.commit()
         conn.close()

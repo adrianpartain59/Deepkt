@@ -7,15 +7,24 @@ import { apiFetch } from "@/lib/api";
 
 interface ArtistEntry {
     artist: string;
-    sc_url: string;
-    sc_username: string;
-    tracks: { title: string; sc_track_url: string }[];
+    sc_url?: string;
+    sc_username?: string;
+    tracks: { title: string; sc_track_url?: string }[];
+}
+
+interface LlmOutput {
+    status: string;
+    tags: string[];
+    seed_artists: string[];
+    message: string | null;
+    filtered_out: { artist: string; reason: string }[];
 }
 
 interface Project {
     name: string;
     slot: number;
     playlist_urls: (string | ArtistEntry)[];
+    llm_output?: LlmOutput | null;
     created_at: string;
 }
 
@@ -40,6 +49,11 @@ export default function ProjectPage({
     const [error, setError] = useState<string | null>(null);
     const [removedTracks, setRemovedTracks] = useState<RemovedTrack[]>([]);
 
+    // Genre analysis state
+    const [analyzeQuery, setAnalyzeQuery] = useState("");
+    const [analyzing, setAnalyzing] = useState(false);
+    const [llmResult, setLlmResult] = useState<LlmOutput | null>(null);
+
     // Spotify auth state
     const [spotifyConnected, setSpotifyConnected] = useState(false);
     const [spotifyChecked, setSpotifyChecked] = useState(false);
@@ -49,7 +63,9 @@ export default function ProjectPage({
             const res = await apiFetch(`/api/projects/${projectSlot}`);
             if (!res.ok) throw new Error("Failed to load project");
             const data = await res.json();
-            setProject(data.project ?? data);
+            const proj = data.project ?? data;
+            setProject(proj);
+            if (proj.llm_output) setLlmResult(proj.llm_output);
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
         }
@@ -163,12 +179,41 @@ export default function ProjectPage({
         }
     };
 
+    const handleAnalyze = async (query?: string) => {
+        setAnalyzing(true);
+        setError(null);
+        try {
+            const res = await apiFetch(`/api/projects/${projectSlot}/analyze`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ query: query || analyzeQuery || undefined }),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: "Analysis failed" }));
+                throw new Error(err.detail || "Analysis failed");
+            }
+            const data = await res.json();
+            setLlmResult(data);
+            await fetchProject();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+        } finally {
+            setAnalyzing(false);
+        }
+    };
+
+    const handleImportComplete = useCallback(async () => {
+        await fetchProject();
+        // Auto-trigger analysis after import
+        handleAnalyze();
+    }, [fetchProject]);
+
     // Parse tracks from project data
     const artistEntries = project?.playlist_urls.filter(
         (e): e is ArtistEntry => typeof e === "object" && "tracks" in e
     ) ?? [];
     const allTracks = artistEntries.flatMap((a) =>
-        a.tracks.map((t) => ({ artist: a.artist, title: t.title, sc_track_url: t.sc_track_url }))
+        a.tracks.map((t) => ({ artist: a.artist, title: t.title, sc_track_url: t.sc_track_url ?? "" }))
     );
 
     return (
@@ -255,13 +300,50 @@ export default function ProjectPage({
                         {spotifyConnected ? (
                             <SpotifyImport
                                 projectSlot={projectSlot}
-                                onImportComplete={fetchProject}
+                                onImportComplete={handleImportComplete}
                                 isConnected={spotifyConnected}
                             />
                         ) : (
                             <div className="flex items-center gap-2 text-zinc-600 font-mono text-sm py-2">
                                 <FaSpotify size={14} />
                                 <span>Spotify not connected</span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Genre Analysis */}
+                <div className="mb-10">
+                    <div className="bg-zinc-950 border border-white/10 rounded-2xl p-6">
+                        <h2 className="text-lg font-bold text-white mb-1">Genre Analysis</h2>
+                        <p className="text-sm text-zinc-500 mb-4">
+                            Describe the subgenre or import a playlist above. Claude Haiku will generate tags and expand artist list to 30.
+                        </p>
+                        <div className="flex gap-2 mb-4">
+                            <input
+                                type="text"
+                                value={analyzeQuery}
+                                onChange={(e) => setAnalyzeQuery(e.target.value)}
+                                placeholder="e.g. dark minimal techno like Surgeon, Regis, Female"
+                                className="flex-1 bg-black border border-white/10 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder-zinc-600 focus:outline-none focus:border-[#e040fb]/40"
+                                onKeyDown={(e) => { if (e.key === "Enter" && !analyzing) handleAnalyze(); }}
+                            />
+                            <button
+                                onClick={() => handleAnalyze()}
+                                disabled={analyzing}
+                                className="px-4 py-2 bg-[#e040fb]/20 border border-[#e040fb]/30 rounded-lg text-sm font-mono text-[#e040fb] hover:bg-[#e040fb]/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                            >
+                                {analyzing ? "Analyzing..." : "Analyze"}
+                            </button>
+                        </div>
+                        {llmResult && (
+                            <div className="mt-4">
+                                <p className="text-xs font-mono text-zinc-500 uppercase tracking-wider mb-2">
+                                    Raw LLM Output
+                                </p>
+                                <pre className="bg-black border border-white/5 rounded-lg p-4 text-xs font-mono text-zinc-300 overflow-x-auto max-h-96 overflow-y-auto scrollbar-hide whitespace-pre-wrap">
+                                    {JSON.stringify(llmResult, null, 2)}
+                                </pre>
                             </div>
                         )}
                     </div>

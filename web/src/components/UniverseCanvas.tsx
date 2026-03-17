@@ -3,6 +3,8 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { Stage, Layer, Circle, Group, Line, Text } from "react-konva";
 import { FaSoundcloud, FaSpotify, FaApple, FaYoutube, FaChevronLeft, FaChevronRight, FaPause, FaPlay, FaHeart, FaChevronDown, FaBars } from "react-icons/fa";
+import useAuthStore from "@/stores/authStore";
+import { apiFetch } from "@/lib/api";
 
 type PlatformKey = "soundcloud" | "spotify" | "apple_music" | "youtube_music";
 
@@ -99,7 +101,8 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
         return window.innerWidth > 768;
     });
 
-    // Liked Tracks (persisted to localStorage, ordered most-recent-first)
+    // Liked Tracks (synced to DB when logged in, localStorage fallback)
+    const { user, accessToken } = useAuthStore();
     const [likedTrackIds, setLikedTrackIds] = useState<string[]>(() => {
         if (typeof window === 'undefined') return [];
         try {
@@ -108,12 +111,59 @@ export default function UniverseCanvas({ onMenuOpen, activeTab }: { onMenuOpen?:
         } catch { return []; }
     });
     const likedSet = useMemo(() => new Set(likedTrackIds), [likedTrackIds]);
+
+    // On login: fetch server likes, merge with any localStorage likes, then push merged set to server
+    const hasSyncedRef = useRef(false);
+    useEffect(() => {
+        if (!user || !accessToken || hasSyncedRef.current) return;
+        hasSyncedRef.current = true;
+
+        (async () => {
+            try {
+                const res = await apiFetch('/api/likes');
+                if (!res.ok) return;
+                const { track_ids: serverIds } = await res.json() as { track_ids: string[] };
+
+                // Merge: server wins for ordering, but include any localStorage-only ids
+                const serverSet = new Set(serverIds);
+                const localOnly = likedTrackIds.filter(id => !serverSet.has(id));
+                const merged = [...serverIds, ...localOnly];
+
+                setLikedTrackIds(merged);
+                localStorage.setItem('ambis-liked-tracks', JSON.stringify(merged));
+
+                // If there were local-only likes, push the merged set to server
+                if (localOnly.length > 0) {
+                    await apiFetch('/api/likes', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ track_ids: merged }),
+                    });
+                }
+            } catch {}
+        })();
+    }, [user, accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Reset sync flag on logout so next login re-syncs
+    useEffect(() => {
+        if (!user) hasSyncedRef.current = false;
+    }, [user]);
+
     const toggleLike = useCallback((trackId: string) => {
         setLikedTrackIds(prev => {
-            const next = prev.includes(trackId)
+            const isLiked = prev.includes(trackId);
+            const next = isLiked
                 ? prev.filter(id => id !== trackId)
                 : [trackId, ...prev.filter(id => id !== trackId)];
             localStorage.setItem('ambis-liked-tracks', JSON.stringify(next));
+
+            // Fire-and-forget API call when logged in
+            if (useAuthStore.getState().user) {
+                apiFetch(`/api/likes/${trackId}`, {
+                    method: isLiked ? 'DELETE' : 'POST',
+                }).catch(() => {});
+            }
+
             return next;
         });
     }, []);

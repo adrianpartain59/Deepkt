@@ -108,10 +108,18 @@ def _init_tables(conn):
             UNIQUE(user_id, slot)
         );
 
+        CREATE TABLE IF NOT EXISTS liked_tracks (
+            user_id     TEXT NOT NULL REFERENCES users(id),
+            track_id    TEXT NOT NULL,
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, track_id)
+        );
+
         CREATE UNIQUE INDEX IF NOT EXISTS idx_users_provider
             ON users(auth_provider, provider_id) WHERE provider_id IS NOT NULL;
 
         CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
+        CREATE INDEX IF NOT EXISTS idx_liked_tracks_user ON liked_tracks(user_id);
         CREATE INDEX IF NOT EXISTS idx_status ON tracks(status);
         CREATE INDEX IF NOT EXISTS idx_artist ON tracks(artist);
         CREATE INDEX IF NOT EXISTS idx_pairs ON training_pairs(anchor_id, candidate_id);
@@ -125,6 +133,12 @@ def _init_tables(conn):
             conn.execute(f"ALTER TABLE tracks ADD COLUMN {col} {coltype}")
         except sqlite3.OperationalError:
             pass
+
+    # Migration: add llm_output to projects
+    try:
+        conn.execute("ALTER TABLE projects ADD COLUMN llm_output TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     conn.commit()
 
